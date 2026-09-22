@@ -1,4 +1,4 @@
-import { emptyMask, intersects, type TimeMask } from "../timing";
+import { intersects } from "../timing";
 import { compareStrings, type Candidate } from "./equivalence";
 import type { Scorer } from "./score";
 
@@ -60,46 +60,83 @@ class TopK {
   }
 }
 
-/** target = a | b, word by word. */
-function orTo(target: TimeMask, a: TimeMask, b: TimeMask): void {
-  for (let i = 0; i < target.length; i++) target[i] = a[i] | b[i];
+/**
+ * Pairwise conflicts between the candidates of two domains, computed once:
+ * `table[j][i]` (i < j) has a 1 at `a * candidates_j + b` when candidate `a` of
+ * domain i shares a slot with candidate `b` of domain j.
+ */
+export function conflictTable(domains: Domain[]): Uint8Array[][] {
+  return domains.map((later, j) =>
+    domains.slice(0, j).map((earlier) => {
+      const width = later.candidates.length;
+      const table = new Uint8Array(earlier.candidates.length * width);
+      earlier.candidates.forEach((a, row) => {
+        later.candidates.forEach((b, column) => {
+          if (intersects(a.features.mask, b.features.mask)) table[row * width + column] = 1;
+        });
+      });
+      return table;
+    }),
+  );
 }
 
 /**
  * Depth-first search over `domains` (already in search order), one candidate per
- * course, pruning any candidate that overlaps the running mask. A node is one
- * candidate tried at some depth; the search stops before node `maxNodes + 1`.
+ * course, skipping any candidate that shares a slot with a pick above it (looked
+ * up in `conflictTable`). A node is one candidate tried at some depth; the search
+ * stops before node `maxNodes + 1`. Complete assignments are scored
+ * incrementally (`Scorer.start`), with the same penalties as `Scorer.penalty`.
  */
 export function search(domains: Domain[], scorer: Scorer, topK: number, maxNodes: number): SearchResult {
   const depthCount = domains.length;
-  const masks = Array.from({ length: depthCount + 1 }, () => emptyMask()); // masks[d] = OR of the first d picks
-  const chosen: Candidate[] = new Array(depthCount);
+  const table = conflictTable(domains);
+  const pickedIndex = new Int32Array(depthCount); // candidate index chosen at each depth
+  const chosen: Candidate[] = new Array(depthCount); // by course index (input order)
+  const state = scorer.start();
   const top = new TopK(topK);
   let nodes = 0;
   let truncated = false;
 
-  function leaf(): void {
-    const entry: Found = { penalty: scorer.penalty(chosen, masks[depthCount]), picks: chosen };
-    if (top.accepts(entry)) top.insert({ penalty: entry.penalty, picks: chosen.slice() });
+  function leaf(penalty: number): void {
+    const entry: Found = { penalty, picks: chosen };
+    if (top.accepts(entry)) top.insert({ penalty, picks: chosen.slice() });
+  }
+
+  /** True if candidate `index` of `depth` overlaps a pick at a smaller depth. */
+  function clashes(depth: number, index: number, width: number): boolean {
+    const rows = table[depth];
+    for (let above = 0; above < depth; above++) {
+      if (rows[above][pickedIndex[above] * width + index] === 1) return true;
+    }
+    return false;
   }
 
   function visit(depth: number): void {
-    if (depth === depthCount) return leaf();
     const { courseIndex, candidates } = domains[depth];
-    for (const candidate of candidates) {
+    const width = candidates.length;
+    const last = depth === depthCount - 1;
+    for (let index = 0; index < width; index++) {
       if (nodes >= maxNodes) {
         truncated = true;
         return;
       }
       nodes++;
-      if (intersects(masks[depth], candidate.features.mask)) continue;
-      orTo(masks[depth + 1], masks[depth], candidate.features.mask);
+      if (clashes(depth, index, width)) continue;
+      const candidate = candidates[index];
       chosen[courseIndex] = candidate;
+      if (last) {
+        leaf(state.penaltyWith(candidate));
+        continue;
+      }
+      pickedIndex[depth] = index;
+      state.push(candidate);
       visit(depth + 1);
+      state.pop(candidate);
       if (truncated) return;
     }
   }
 
-  visit(0);
+  if (depthCount === 0) leaf(state.penaltyWith(null));
+  else visit(0);
   return { found: top.items, nodes, truncated };
 }

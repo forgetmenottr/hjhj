@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import type { ParsedPaste } from "../app/pastes";
 import type { PasteNotice } from "../app/state";
 import { Badge, Button, Card, CheckIcon, CloseIcon, InfoIcon, PlusIcon } from "./ui";
@@ -20,8 +20,15 @@ export function PasteInput({
   const inputId = useId();
   const helpId = useId();
 
+  const box = useRef<HTMLTextAreaElement>(null);
+
+  // After a successful add the box is empty and "Thêm môn" becomes disabled,
+  // which would drop keyboard focus to <body>; put it back in the box, ready
+  // for the next course.
   const add = () => {
-    if (onAdd(text)) setText("");
+    if (!onAdd(text)) return;
+    setText("");
+    box.current?.focus();
   };
 
   return (
@@ -40,6 +47,7 @@ export function PasteInput({
           Nội dung đã copy
         </label>
         <textarea
+          ref={box}
           id={inputId}
           aria-describedby={helpId}
           value={text}
@@ -47,7 +55,7 @@ export function PasteInput({
           rows={7}
           spellCheck={false}
           placeholder={"STT\tMã MH\tTên MH\t…\n1\tCO2007\tKiến trúc máy tính\t4.0\nCO2007 - Kiến trúc máy tính\n…"}
-          className="mt-1 w-full resize-y rounded-xl border border-ctp-surface1 bg-ctp-base p-3 font-mono text-xs text-ctp-text placeholder:text-ctp-subtext/70 focus:border-ctp-mauve"
+          className="mt-1 w-full resize-y rounded-xl border border-ctp-overlay1 bg-ctp-base p-3 font-mono text-xs text-ctp-text placeholder:text-ctp-subtext focus:border-ctp-mauve"
         />
         <div className="mt-3 flex justify-end">
           <Button variant="primary" onClick={add} disabled={text.trim() === ""} className="w-full sm:w-auto">

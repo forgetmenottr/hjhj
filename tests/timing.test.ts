@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "../src/lib/parser";
 import type { Course, Session } from "../src/lib/parser";
 import {
-  buildMasks,
+  buildMasks as buildMasksRaw,
   buildSessionMask,
   conflictSlots,
   conflictSummary,
@@ -16,9 +16,19 @@ import {
   popcount,
   setSlot,
   slots,
+  TIME_WARNING_CODES,
   TOTAL_BITS,
   type IndexedGroup,
+  type TimeWarning,
 } from "../src/lib/timing";
+
+/** Every warning the tests below produce; the last test checks that each has a code. */
+const emitted: TimeWarning[] = [];
+function buildMasks(courses: Course[]) {
+  const result = buildMasksRaw(courses);
+  emitted.push(...result.warnings);
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
@@ -309,7 +319,13 @@ describe("robustness", () => {
     let result: ReturnType<typeof buildMasks> | undefined;
     expect(() => (result = buildMasks(courses))).not.toThrow();
     expect(result!.warnings).toEqual([
-      { courseCode: "CO2007", groupId: "A01_A01", message: expect.stringContaining("outside") },
+      {
+        courseCode: "CO2007",
+        groupId: "A01_A01",
+        message: expect.stringContaining("outside"),
+        code: "slots-out-of-range",
+        params: expect.objectContaining({ session: 1, count: skipped }),
+      },
     ]);
     // The in-range slots are unchanged.
     expect(popcount(result!.courses[0].groups[0].mask)).toBe(65);
@@ -323,7 +339,13 @@ describe("robustness", () => {
 
     const result = buildMasks(courses);
     expect(result.warnings).toEqual([
-      { courseCode: "CO2007", groupId: "L03_L05", message: expect.stringContaining("internal overlap") },
+      {
+        courseCode: "CO2007",
+        groupId: "L03_L05",
+        message: expect.stringContaining("internal overlap"),
+        code: "internal-overlap",
+        params: { session: 2, other: 1, day: 4 },
+      },
     ]);
     const mask = result.courses[0].groups.find((g) => g.group.id === "L03_L05")!.mask;
     expect(popcount(mask)).toBe(20 + 45 - 12); // lab + theory - shared (periods 10-12 × 4 weeks)
@@ -339,7 +361,7 @@ describe("robustness", () => {
     expect(result.courses[0].groups[0].group).toBe(repasted.groups[0]);
     expect(result.courses[0].groups[0].group.registered).toBe(40);
     expect(result.warnings).toEqual([
-      { courseCode: "CO2007", groupId: "", message: expect.stringContaining("later copy replaces") },
+      { courseCode: "CO2007", groupId: "", message: expect.stringContaining("later copy replaces"), code: "duplicate-course", params: {} },
     ]);
     expect(new Set(result.courses.flatMap((c) => c.groups.map((g) => g.key))).size).toBe(28);
   });
@@ -356,7 +378,7 @@ describe("robustness", () => {
     expect(groups.map((g) => g.group.id)).toEqual(["A01", "CC01", "CC02", "CC03", "CC04", "CC05", "L01", "L02", "L03", "TN01"]);
     expect(groups[0].group).toBe(later);
     expect(result.warnings).toEqual([
-      { courseCode: "CO2011", groupId: "A01", message: expect.stringContaining("later copy replaces") },
+      { courseCode: "CO2011", groupId: "A01", message: expect.stringContaining("later copy replaces"), code: "duplicate-group", params: {} },
     ]);
   });
 });
@@ -390,5 +412,27 @@ describe("performance", () => {
     expect(left).toHaveLength(378); // 28 groups choose 2
     expect(hits).toBe(conflictingPairs * 10_000); // keeps the loop from being optimized away
     expect(elapsed).toBeLessThan(3000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Warning codes (runs last: checks every warning produced above)
+// ---------------------------------------------------------------------------
+
+describe("warning codes", () => {
+  it("warns about a group without any session", () => {
+    const courses = editableCourses();
+    findGroup(courses, "CO2011", "A01").sessions = [];
+    expect(buildMasks(courses).warnings).toEqual([
+      { courseCode: "CO2011", groupId: "A01", message: "group has no sessions", code: "group-no-sessions", params: {} },
+    ]);
+  });
+
+  it("every warning emitted by the tests above has a known code and params", () => {
+    expect(emitted.length).toBeGreaterThanOrEqual(5);
+    for (const warning of emitted) {
+      expect(TIME_WARNING_CODES, warning.message).toContain(warning.code);
+      expect(warning.params).toBeTypeOf("object");
+    }
   });
 });

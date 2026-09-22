@@ -193,7 +193,7 @@ function LecturerNames({ names, onChange }: { names: string[]; onChange: (names:
           onChange(split(e.target.value));
         }}
         placeholder="Nguyễn Văn A"
-        className="mt-1 w-full rounded-xl border border-ctp-surface1 bg-ctp-base p-3 text-sm focus:border-ctp-mauve"
+        className="mt-1 w-full rounded-xl border border-ctp-overlay1 bg-ctp-base p-3 text-sm placeholder:text-ctp-subtext focus:border-ctp-mauve"
       />
     </div>
   );
@@ -210,7 +210,7 @@ function TimeOfDaySelect({ prefs, update }: { prefs: Preferences; update: Update
         id={id}
         value={prefs.weights.timeOfDay.prefer}
         onChange={(e) => update((d) => { d.weights.timeOfDay.prefer = e.target.value as Preferences["weights"]["timeOfDay"]["prefer"]; })}
-        className="min-h-11 rounded-lg border border-ctp-surface1 bg-ctp-base px-3 text-sm"
+        className="min-h-11 rounded-lg border border-ctp-overlay1 bg-ctp-base px-3 text-sm"
       >
         <option value="none">Không</option>
         <option value="morning">Sáng (tiết 1–6)</option>

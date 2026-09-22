@@ -85,7 +85,9 @@ Thứ 2 | - 2 3 4 - - - - - - - - - - - -   | A4-409 | 1  |       | 1234567-9012
 
 - **Day**: `Thứ 2`..`Thứ 7` → 2..7, `Chủ nhật` (Sunday) → 8.
 - **Periods**: 16 cells, each `-` or the period number, so `- 2 3 4 - …` → `[2, 3, 4]`.
-- **Room**: must match `/^[A-Z]\d{1,2}-\d{3}$/` (`C5-202`, `B1-212`, `B10-207`).
+- **Room**: must match `/^[A-Z]\d{1,2}-[A-Z0-9]+$/` (`C5-202`, `B10-207`, and
+  halls such as `C5-HOITRUONG`, `H1-GDH1`, `H6-GDH6` from SP1031; Phase 6 fix:
+  the old `\d{3}` rule dropped those sessions).
   There are no online classes. A session line with no room is skipped with a warning.
 - **Campus**: `1` = CS1 (Lý Thường Kiệt), `2` = CS2 (Dĩ An).
 - **BT/TN**: kept raw in `labField`. It is usually empty; do not rely on it.
@@ -113,7 +115,10 @@ count is not used to decide the kind.
 
 ## Warnings
 
-A warning has `{ line, text, message }`. The parser warns and continues when:
+A warning has `{ line, text, message, code, params }`. `message` is English;
+`code` is one of `PARSE_WARNING_CODES` and `params` holds its values (e.g.
+`{ expected: 16, found: 15 }`), so the UI can show its own (Vietnamese) text.
+The parser warns and continues when:
 
 - a line is not recognized;
 - a group line comes before any course header;

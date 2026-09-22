@@ -46,12 +46,38 @@ export interface Course {
   groups: Group[];
 }
 
+/** Every `ParseWarning.code` the parser can emit. */
+export const PARSE_WARNING_CODES = [
+  "internal-error",
+  "unrecognized-line",
+  "group-before-course",
+  "invalid-group-id",
+  "missing-registered-capacity",
+  "missing-language",
+  "session-without-group",
+  "session-no-day",
+  "session-no-room",
+  "session-no-weeks",
+  "session-no-periods",
+  "period-column-count",
+  "period-misplaced",
+  "week-digit-mismatch",
+  "unknown-campus",
+  "no-teaching-week",
+] as const;
+export type ParseWarningCode = (typeof PARSE_WARNING_CODES)[number];
+
 export interface ParseWarning {
   /** 1-based line number in the original input. */
   line: number;
   /** The offending line, trimmed. */
   text: string;
+  /** English description (kept for compatibility; the UI translates `code`). */
   message: string;
+  /** One of PARSE_WARNING_CODES. */
+  code: string;
+  /** Values for the message template, e.g. { found: 15 }. */
+  params: Record<string, unknown>;
 }
 
 export interface ParseResult {

@@ -69,8 +69,10 @@ fall back to 5 / 5,000,000.
    smallest id), and the other keys go into `Pick.alternatives`. Filtering runs
    first, so an excluded or filtered-out group is never listed as an alternative.
 3. **Search** ([`search.ts`](./search.ts)). Courses are ordered by MRV: fewest
-   classes first, ties broken by course code. A DFS carries a running OR mask
-   and skips any candidate that `intersects` it.
+   classes first, ties broken by course code. Before the DFS, `conflictTable`
+   compares every candidate with every candidate of each other course once;
+   the DFS then skips a candidate that clashes with a pick above it by table
+   lookup (at most one lookup per depth) instead of comparing 105-word masks.
    - One *node* is one candidate tried at some depth. At `maxNodes` the search
      stops and sets `truncated`.
    - Each complete assignment is scored. The best `topK` are kept in a sorted
@@ -147,6 +149,25 @@ codes that break it.
 ### Speed
 
 The mask layout puts one (week, day) in exactly half a 32-bit word
-(16 periods). The scorer scans 30 × 7 half-words with bit tricks and never
-decodes individual slots. Per-group features (campus masks and constraint
-flags) are computed once per representative, not once per schedule.
+(16 periods). Per-group features (campus masks, constraint flags, and the
+(week, day) cells the group touches) are computed once per representative.
+
+`penalty()` / `explain()` scan all 30 × 7 cells; they are the reference. The
+search instead scores incrementally (`Scorer.start()` → `ScoreState`): it keeps
+the integer totals `timeMetrics` adds up (slots, early and preferred slots, the
+span of each active week-day, active week-days, active weeks, campus switches,
+broken constraints) and updates only the cells a pick touches on push / pop.
+A leaf is scored from those totals with the same formulas and the same order
+of additions, so its penalty equals `penalty()` exactly (the brute-force tests
+compare them), and results are identical to a full rescan.
+
+With the six real fixtures (CO2001, CO2003, CO2007, CO2011, SK2001, SP1031)
+and the app defaults: 2,778,034 nodes and 1,278,259 complete schedules. A full
+rescan per leaf took about 6.6 s; the conflict table and incremental scoring
+take about 0.3–0.4 s (bundled, Node 24), with the same nodes and results.
+
+## Diagnostics
+
+`diagnostics` is English text. `diagnosticDetails` has the same entries, in the
+same order, as `{ code, params, message }` with `code` one of
+`SOLVER_DIAGNOSTIC_CODES`, so the UI can word them itself (Vietnamese).

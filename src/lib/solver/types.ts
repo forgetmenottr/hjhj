@@ -88,14 +88,42 @@ export interface Schedule {
   violations: Violation[];
 }
 
+/** Every `SolverDiagnostic.code` solve() can emit. */
+export const SOLVER_DIAGNOSTIC_CODES = [
+  "no-courses",
+  "dropped-conflicting",
+  "course-blocked",
+  "course-blocked-combined",
+  "no-combination-required",
+  "relaxed",
+  "course-no-groups",
+  "all-excluded",
+  "locked-excluded",
+  "locked-missing",
+  "locked-overlap",
+  "conflicts-with-locked",
+  "no-combination",
+  "truncated",
+] as const;
+export type SolverDiagnosticCode = (typeof SOLVER_DIAGNOSTIC_CODES)[number];
+
+/** One diagnostic: a code and its values for the UI, plus the English text. */
+export interface SolverDiagnostic {
+  code: string;
+  params: Record<string, unknown>;
+  message: string;
+}
+
 export interface SolveResult {
   status: "ok" | "relaxed" | "infeasible";
   /** Sorted: penalty asc, then picks' keys lexicographically (deterministic). */
   schedules: Schedule[];
   /** Constraint names converted from required to soft. */
   relaxed: string[];
-  /** Human-readable reasons when relaxed/infeasible. */
+  /** Human-readable reasons (English) when relaxed/infeasible. */
   diagnostics: string[];
+  /** The same diagnostics with codes, one per `diagnostics` entry, in the same order. */
+  diagnosticDetails: SolverDiagnostic[];
   stats: { nodes: number; ms: number; truncated: boolean };
 }
 

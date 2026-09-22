@@ -5,7 +5,19 @@ import { buildCandidates } from "./equivalence";
 import { applyConstraints, applyHardRules, constraintsWithMode } from "./filter";
 import { createScorer, type Scorer } from "./score";
 import { orderByMrv, search, type Found } from "./search";
-import { normalizePreferences, type ConstraintName, type Preferences, type Schedule, type SolveResult } from "./types";
+import {
+  normalizePreferences,
+  type ConstraintName,
+  type Preferences,
+  type Schedule,
+  type SolveResult,
+  type SolverDiagnostic,
+  type SolverDiagnosticCode,
+} from "./types";
+
+function diagnostic(code: SolverDiagnosticCode, message: string, params: Record<string, unknown> = {}): SolverDiagnostic {
+  return { code, params, message };
+}
 
 /** Outcome of one search over fixed allowed groups. */
 interface Attempt {
@@ -28,7 +40,8 @@ export function solve(courses: IndexedCourse[], input: Preferences): SolveResult
   const started = performance.now();
   const prefs = normalizePreferences(input);
   const list = Array.isArray(courses) ? courses : [];
-  const diagnostics: string[] = [];
+  const details: SolverDiagnostic[] = [];
+  const note = (...items: SolverDiagnostic[]) => details.push(...items);
   let nodes = 0;
   let truncated = false;
 
@@ -36,19 +49,22 @@ export function solve(courses: IndexedCourse[], input: Preferences): SolveResult
     status,
     schedules,
     relaxed,
-    diagnostics,
+    diagnostics: details.map((d) => d.message),
+    diagnosticDetails: details,
     stats: { nodes, ms: performance.now() - started, truncated },
   });
   const run = (allowed: IndexedGroup[][], relaxed: ConstraintName[]): Schedule[] => {
     const result = attempt(list, allowed, prefs, relaxed, prefs.maxNodes - nodes);
     nodes += result.nodes;
     truncated ||= result.truncated;
-    if (result.dropped > 0) diagnostics.push(`Internal check dropped ${result.dropped} schedule(s) with a time conflict.`);
+    if (result.dropped > 0) {
+      note(diagnostic("dropped-conflicting", `Internal check dropped ${result.dropped} schedule(s) with a time conflict.`, { count: result.dropped }));
+    }
     return result.schedules;
   };
 
   if (list.length === 0) {
-    diagnostics.push("No courses to schedule.");
+    note(diagnostic("no-courses", "No courses to schedule."));
     return finish("ok", [], []);
   }
 
@@ -62,19 +78,29 @@ export function solve(courses: IndexedCourse[], input: Preferences): SolveResult
   }
 
   if (required.length > 0) {
-    diagnostics.push(...explainRequired(list, hard, strict, required, prefs));
+    note(...explainRequired(list, hard, strict, required, prefs));
     if (hard.every(nonEmpty)) {
       const schedules = run(hard, required);
       if (schedules.length > 0) {
-        diagnostics.push(`Relaxed to soft penalties (weight ${RELAX_WEIGHT}): ${required.join(", ")}.`);
+        note(
+          diagnostic("relaxed", `Relaxed to soft penalties (weight ${RELAX_WEIGHT}): ${required.join(", ")}.`, {
+            weight: RELAX_WEIGHT,
+            constraints: [...required],
+          }),
+        );
         return finish("relaxed", schedules, [...required]);
       }
     }
   }
 
-  diagnostics.push(...explainInfeasible(list, hard, prefs, required.length > 0));
+  note(...explainInfeasible(list, hard, prefs, required.length > 0));
   if (truncated) {
-    diagnostics.push(`Search stopped after ${nodes} nodes (maxNodes = ${prefs.maxNodes}); a schedule may exist beyond that limit.`);
+    note(
+      diagnostic("truncated", `Search stopped after ${nodes} nodes (maxNodes = ${prefs.maxNodes}); a schedule may exist beyond that limit.`, {
+        nodes,
+        maxNodes: prefs.maxNodes,
+      }),
+    );
   }
   return finish("infeasible", [], []);
 }
@@ -136,23 +162,37 @@ function explainRequired(
   strict: IndexedGroup[][],
   required: ConstraintName[],
   prefs: Preferences,
-): string[] {
+): SolverDiagnostic[] {
   const lines = courses.flatMap((course, i) => {
     if (hard[i].length === 0 || strict[i].length > 0) return [];
     const blocking = required.filter((name) => applyConstraints(hard[i], [name], prefs).length === 0);
     return blocking.length > 0
-      ? [`${course.code}: no group meets the required ${blocking.join(", ")}.`]
-      : [`${course.code}: no group meets all required constraints together (${required.join(", ")}).`];
+      ? [
+          diagnostic("course-blocked", `${course.code}: no group meets the required ${blocking.join(", ")}.`, {
+            course: course.code,
+            constraints: blocking,
+          }),
+        ]
+      : [
+          diagnostic("course-blocked-combined", `${course.code}: no group meets all required constraints together (${required.join(", ")}).`, {
+            course: course.code,
+            constraints: [...required],
+          }),
+        ];
   });
   if (lines.length === 0 && strict.every(nonEmpty)) {
-    lines.push(`No conflict-free combination meets every required constraint (${required.join(", ")}).`);
+    lines.push(
+      diagnostic("no-combination-required", `No conflict-free combination meets every required constraint (${required.join(", ")}).`, {
+        constraints: [...required],
+      }),
+    );
   }
   return lines;
 }
 
 /** Why nothing works even with required constraints relaxed. */
-function explainInfeasible(courses: IndexedCourse[], hard: IndexedGroup[][], prefs: Preferences, afterRelax: boolean): string[] {
-  const lines = courses.flatMap((course, i) => (hard[i].length === 0 ? [`${course.code}: ${whyEmpty(course, prefs)}.`] : []));
+function explainInfeasible(courses: IndexedCourse[], hard: IndexedGroup[][], prefs: Preferences, afterRelax: boolean): SolverDiagnostic[] {
+  const lines = courses.flatMap((course, i) => (hard[i].length === 0 ? [whyEmpty(course, prefs)] : []));
   const locked = courses.flatMap((course, i) =>
     prefs.locked[course.code] !== undefined && hard[i].length === 1 ? [hard[i][0]] : [],
   );
@@ -160,7 +200,15 @@ function explainInfeasible(courses: IndexedCourse[], hard: IndexedGroup[][], pre
   for (let i = 0; i < locked.length; i++) {
     for (let j = i + 1; j < locked.length; j++) {
       const [a, b] = [locked[i], locked[j]];
-      if (conflicts(a, b)) lines.push(`Locked groups ${a.key} and ${b.key} overlap: ${describeOverlap(conflictSummary(a, b))}.`);
+      if (!conflicts(a, b)) continue;
+      const overlap = conflictSummary(a, b);
+      lines.push(
+        diagnostic("locked-overlap", `Locked groups ${a.key} and ${b.key} overlap: ${describeOverlap(overlap)}.`, {
+          a: a.key,
+          b: b.key,
+          overlap,
+        }),
+      );
     }
   }
 
@@ -168,25 +216,39 @@ function explainInfeasible(courses: IndexedCourse[], hard: IndexedGroup[][], pre
     const others = locked.filter((g) => g.courseCode !== course.code);
     if (prefs.locked[course.code] !== undefined || hard[i].length === 0 || others.length === 0) return;
     if (hard[i].every((g) => others.some((l) => conflicts(g, l)))) {
-      lines.push(`${course.code}: every group conflicts with the locked group(s) ${others.map((g) => g.key).join(", ")}.`);
+      const locked = others.map((g) => g.key);
+      lines.push(
+        diagnostic("conflicts-with-locked", `${course.code}: every group conflicts with the locked group(s) ${locked.join(", ")}.`, {
+          course: course.code,
+          locked,
+        }),
+      );
     }
   });
 
   if (lines.length === 0) {
-    lines.push(`No conflict-free combination of groups exists${afterRelax ? ", even with the required constraints relaxed" : ""}.`);
+    lines.push(
+      diagnostic("no-combination", `No conflict-free combination of groups exists${afterRelax ? ", even with the required constraints relaxed" : ""}.`, {
+        afterRelax,
+      }),
+    );
   }
   return lines;
 }
 
 /** Why a course has no group left after locked / excluded rules. */
-function whyEmpty(course: IndexedCourse, prefs: Preferences): string {
-  if (course.groups.length === 0) return "the course has no groups";
-  const lockedId = prefs.locked[course.code];
-  if (lockedId === undefined) return `all ${course.groups.length} groups are excluded`;
-  const key = `${course.code}:${lockedId}`;
+function whyEmpty(course: IndexedCourse, prefs: Preferences): SolverDiagnostic {
+  const code = course.code;
+  if (course.groups.length === 0) return diagnostic("course-no-groups", `${code}: the course has no groups.`, { course: code });
+  const lockedId = prefs.locked[code];
+  if (lockedId === undefined) {
+    const count = course.groups.length;
+    return diagnostic("all-excluded", `${code}: all ${count} groups are excluded.`, { course: code, count });
+  }
+  const key = `${code}:${lockedId}`;
   return course.groups.some((g) => g.group.id === lockedId)
-    ? `locked group ${key} is excluded`
-    : `locked group ${key} does not exist`;
+    ? diagnostic("locked-excluded", `${code}: locked group ${key} is excluded.`, { course: code, key })
+    : diagnostic("locked-missing", `${code}: locked group ${key} does not exist.`, { course: code, key });
 }
 
 const DAY_NAMES: Record<Day, string> = {

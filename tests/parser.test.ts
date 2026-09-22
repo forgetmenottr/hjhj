@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { parse } from "../src/lib/parser";
-import type { Course, Group } from "../src/lib/parser";
+import { parse as parseText, PARSE_WARNING_CODES } from "../src/lib/parser";
+import type { Course, Group, ParseWarning } from "../src/lib/parser";
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
@@ -14,6 +14,14 @@ function fixture(name: string): string {
 
 const CO2007 = fixture("CO2007.txt");
 const CO2011 = fixture("CO2011.txt");
+
+/** Every warning the tests below produce; the last test checks that each has a code. */
+const emitted: ParseWarning[] = [];
+function parse(text: string) {
+  const result = parseText(text);
+  emitted.push(...result.warnings);
+  return result;
+}
 
 function range(from: number, to: number): number[] {
   return Array.from({ length: to - from + 1 }, (_, i) => from + i);
@@ -292,13 +300,13 @@ describe("derived edge cases", () => {
     // Line 11 falls between A01_A02's session header and its first session.
     const result = parse(insertLine(CO2007, 11, GARBAGE));
     expect(result.courses).toEqual(parse(CO2007).courses);
-    expect(result.warnings).toEqual([{ line: 11, text: GARBAGE, message: expect.any(String) }]);
+    expect(result.warnings).toEqual([{ line: 11, text: GARBAGE, message: expect.any(String), code: "unrecognized-line", params: {} }]);
   });
 
   it("counts blank lines in warning line numbers", () => {
     const result = parse(`\r\n\r\n${insertLine(CO2007, 11, GARBAGE)}`);
     expect(result.courses).toEqual(parse(CO2007).courses);
-    expect(result.warnings).toEqual([{ line: 13, text: GARBAGE, message: expect.any(String) }]);
+    expect(result.warnings).toEqual([{ line: 13, text: GARBAGE, message: expect.any(String), code: "unrecognized-line", params: {} }]);
   });
 
   describe("session line without a room", () => {
@@ -401,7 +409,7 @@ describe("derived edge cases", () => {
     const result = parse([lines[2], lines[6]].join("\n"));
     expect(result.courses).toHaveLength(1);
     expect(result.courses[0].groups).toEqual([]);
-    expect(result.warnings).toEqual([{ line: 2, text: lines[6].trim(), message: expect.any(String) }]);
+    expect(result.warnings).toEqual([{ line: 2, text: lines[6].trim(), message: expect.any(String), code: "session-without-group", params: {} }]);
   });
 
   it("never throws on truncated or non-string input", () => {
@@ -411,5 +419,43 @@ describe("derived edge cases", () => {
       }
     }
     expect(parse(undefined as unknown as string)).toEqual({ courses: [], warnings: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rooms whose number part has letters (real data: SP1031)
+// ---------------------------------------------------------------------------
+
+describe("rooms with letters (SP1031)", () => {
+  it("keeps sessions in rooms like C5-HOITRUONG and H1-GDH1", () => {
+    const result = parse(fixture("SP1031.txt"));
+    expect(result.warnings).toEqual([]);
+    const [course] = result.courses;
+    expect(course.groups).toHaveLength(21);
+    expect(course.groups.every((g) => g.sessions.length === 1)).toBe(true);
+    const room = (id: string) => course.groups.find((g) => g.id === id)!.sessions[0];
+    expect(room("CC03")).toMatchObject({ day: 5, periods: [9, 10], room: "C5-HOITRUONG", campus: 1 });
+    expect(room("L01")).toMatchObject({ day: 4, periods: [2, 3], room: "H1-GDH1", campus: 2 });
+    expect(room("L02")).toMatchObject({ day: 5, periods: [4, 5], room: "H6-GDH6", campus: 2 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Warning codes (runs last: checks every warning produced above)
+// ---------------------------------------------------------------------------
+
+describe("warning codes", () => {
+  it("every warning emitted by the tests above has a known code and params", () => {
+    expect(emitted.length).toBeGreaterThan(10);
+    for (const warning of emitted) {
+      expect(PARSE_WARNING_CODES, warning.message).toContain(warning.code);
+      expect(warning.params).toBeTypeOf("object");
+    }
+  });
+
+  it("every real fixture parses without warnings", () => {
+    for (const name of ["CO2001.txt", "CO2003.txt", "CO2007.txt", "CO2011.txt", "SK2001.txt", "SP1031.txt"]) {
+      expect(parseText(fixture(name)).warnings, name).toEqual([]);
+    }
   });
 });

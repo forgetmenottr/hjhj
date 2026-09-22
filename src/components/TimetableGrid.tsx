@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
-import { assignLanes, describeBlock, periodRange, usedDays, type GridBlock } from "../lib/view/grid";
-import { campusLabel, DAY_LONG, formatWeekList } from "../lib/view/format";
+import { assignLanes, describeBlock, periodRange, usedDays, weekLabel, type GridBlock } from "../lib/view/grid";
+import { campusLabel, DAY_LONG } from "../lib/view/format";
 import { courseColor } from "./courseColor";
 import { LockIcon } from "./ui";
 
@@ -16,10 +16,13 @@ const ROW = 48;
 export function TimetableGrid({
   blocks,
   frame = blocks,
+  standard = null,
   isLocked = () => false,
 }: {
   blocks: GridBlock[];
   frame?: GridBlock[];
+  /** The usual term; theory sessions outside it get a week label ("T12–16"). */
+  standard?: number[] | null;
   isLocked?: (block: GridBlock) => boolean;
 }) {
   const days = usedDays(frame);
@@ -80,7 +83,7 @@ export function TimetableGrid({
                 <p className="text-ctp-text/90">
                   {block.room} · {campusLabel(block.campus)}
                 </p>
-                {block.kind === "lab" && <p className="text-ctp-text/90">tuần {formatWeekList(block.weeks)}</p>}
+                {weekLabel(block, standard) && <p className="font-semibold">{weekLabel(block, standard)}</p>}
               </li>
             ))}
           </ul>

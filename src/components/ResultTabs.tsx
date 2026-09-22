@@ -1,14 +1,12 @@
-import { useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, type KeyboardEvent } from "react";
 import type { SolveOutcome } from "../app/state";
 import type { Schedule } from "../lib/solver";
-import { blocksForWeek, toGridBlocks, weeksWithClasses, type GridBlock, type WeekFilter } from "../lib/view/grid";
+import { toGridBlocks, type GridBlock, type WeekFilter } from "../lib/view/grid";
 import { relaxedViolations, scheduleLabel } from "../lib/view/summary";
-import { DayList } from "./DayList";
 import { PickList, type PickActions } from "./PickList";
 import { ScoreBreakdown } from "./ScoreBreakdown";
-import { TimetableGrid } from "./TimetableGrid";
-import { AlertIcon, Card, InfoIcon } from "./ui";
-import { WeekSelector } from "./WeekSelector";
+import { TimetableSection } from "./TimetableSection";
+import { AlertIcon, Card } from "./ui";
 
 interface Props extends PickActions {
   outcome: SolveOutcome;
@@ -18,15 +16,18 @@ interface Props extends PickActions {
   courseNames: Record<string, string>;
   locked: Record<string, string>;
   autoLocked: string[];
+  /** Week shown in the timetable (shared with step 5 and the PNG export). */
+  week: WeekFilter;
+  onWeek: (week: WeekFilter) => void;
+  standard: number[] | null;
 }
 
 /**
  * "Lịch 1 · 87 điểm" … tabs and the selected schedule. A schedule that breaks
  * relaxed requirements is labelled "Lịch N · ⚠ K yêu cầu" instead of its score.
  */
-export function ResultTabs({ outcome, selected, onSelect, courseNames, locked, autoLocked, onToggleLock, onMarkFull }: Props) {
+export function ResultTabs({ outcome, selected, onSelect, courseNames, locked, autoLocked, week, onWeek, standard, onToggleLock, onMarkFull }: Props) {
   const { schedules, stats, relaxed } = outcome.result;
-  const [week, setWeek] = useState<WeekFilter>("all");
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const baseId = useId();
   if (schedules.length === 0) return null;
@@ -83,7 +84,8 @@ export function ResultTabs({ outcome, selected, onSelect, courseNames, locked, a
           schedule={current}
           relaxed={relaxed}
           week={week}
-          onWeek={setWeek}
+          onWeek={onWeek}
+          standard={standard}
           courseNames={courseNames}
           locked={locked}
           autoLocked={autoLocked}
@@ -109,6 +111,7 @@ function ScheduleView({
   relaxed,
   week,
   onWeek,
+  standard,
   courseNames,
   locked,
   autoLocked,
@@ -119,12 +122,12 @@ function ScheduleView({
   relaxed: string[];
   week: WeekFilter;
   onWeek: (week: WeekFilter) => void;
+  standard: number[] | null;
   courseNames: Record<string, string>;
   locked: Record<string, string>;
   autoLocked: string[];
 }) {
   const blocks = toGridBlocks(schedule);
-  const shown = blocksForWeek(blocks, week);
   const isLocked = (b: GridBlock) => locked[b.courseCode] === b.groupId;
   const broken = relaxedViolations(schedule, relaxed);
 
@@ -140,32 +143,7 @@ function ScheduleView({
         onMarkFull={onMarkFull}
       />
 
-      <section aria-label="Thời khoá biểu" className="space-y-2">
-        <WeekSelector weeks={weeksWithClasses(blocks)} value={week} onChange={onWeek} />
-        <div aria-live="polite">
-          {shown.length === 0 ? (
-            <p className="flex items-center gap-2 rounded-2xl border border-dashed border-ctp-surface1 p-6 text-sm text-ctp-subtext">
-              <InfoIcon className="size-5 shrink-0" />
-              Tuần này không có lớp
-            </p>
-          ) : (
-            <p className="text-xs text-ctp-subtext">
-              {week === "all" ? "Gộp tất cả các tuần; buổi thí nghiệm (TN) ghi rõ tuần học." : `Tuần ${week}: chỉ hiện các buổi có học trong tuần này.`}
-            </p>
-          )}
-        </div>
-        {shown.length > 0 && (
-          <>
-            <div className="hidden md:block">
-              {/* The grid keeps the all-weeks frame so days and rows do not jump between weeks. */}
-              <TimetableGrid blocks={shown} frame={blocks} isLocked={isLocked} />
-            </div>
-            <div className="md:hidden">
-              <DayList blocks={shown} isLocked={isLocked} />
-            </div>
-          </>
-        )}
-      </section>
+      <TimetableSection blocks={blocks} week={week} onWeek={onWeek} standard={standard} isLocked={isLocked} />
 
       <Card>
         <h3 className="font-semibold">

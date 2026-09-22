@@ -9,6 +9,8 @@
   --color-ctp-surface0: #313244;
   --color-ctp-surface1: #45475a;
   --color-ctp-surface2: #585b70;
+  /* Borders of inputs and dashed boxes: ≥ 3:1 against base/mantle (WCAG 1.4.11). */
+  --color-ctp-overlay1: #7f849c;
   --color-ctp-subtext: #a6adc8;
   --color-ctp-text: #cdd6f4;
 
@@ -81,5 +83,42 @@
     .spinner {
       animation-duration: 2.4s;
     }
+  }
+}
+
+/* Print ("In" in step 5): only the checklist and the grid, in Catppuccin Latte
+   (light) — the same tokens, so every utility switches colors by itself. */
+@media print {
+  :root {
+    --color-ctp-crust: #dce0e8;
+    --color-ctp-mantle: #ffffff;
+    --color-ctp-base: #ffffff;
+    --color-ctp-surface0: #ccd0da;
+    --color-ctp-surface1: #bcc0cc;
+    --color-ctp-surface2: #acb0be;
+    --color-ctp-overlay1: #8c8fa1;
+    --color-ctp-subtext: #5c5f77;
+    --color-ctp-text: #4c4f69;
+    --color-ctp-mauve: #8839ef;
+    --color-ctp-blue: #1e66f5;
+    --color-ctp-green: #40a02b;
+    --color-ctp-peach: #fe640b;
+    --color-ctp-red: #d20f39;
+    --color-ctp-yellow: #df8e1d;
+    --color-ctp-teal: #179299;
+    --color-ctp-pink: #ea76cb;
+    --color-ctp-sky: #04a5e5;
+    --color-ctp-lavender: #7287fd;
+  }
+
+  html {
+    color-scheme: light;
+  }
+
+  /* Course colors are backgrounds; keep them on paper. */
+  .course-block,
+  .course-dot {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

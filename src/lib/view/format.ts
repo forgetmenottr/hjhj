@@ -13,12 +13,13 @@ export const DAY_LONG: Record<Day, string> = {
 };
 export const ALL_DAYS: Day[] = [2, 3, 4, 5, 6, 7, 8];
 
-/** Names of the four steps of the app. */
-export const STEP_LABELS: Record<1 | 2 | 3 | 4, string> = {
+/** Names of the five steps of the app. */
+export const STEP_LABELS: Record<1 | 2 | 3 | 4 | 5, string> = {
   1: "Dán dữ liệu",
   2: "Kiểm tra",
   3: "Yêu cầu",
   4: "Kết quả",
+  5: "Đăng ký",
 };
 
 /** Vietnamese names of solver score items and constraints. */
@@ -56,6 +57,20 @@ export function formatRanges(numbers: number[]): string {
   return contiguousRuns(numbers)
     .map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`))
     .join(", ");
+}
+
+/**
+ * Compact week label for sessions outside the usual term: [1..5] → "T1–5",
+ * [6,7,9,10,11] → "T6–7, 9–11", [13] → "T13" ("T" = tuần). Empty → "".
+ */
+export function formatWeeks(weeks: number[]): string {
+  const ranges = formatRanges(weeks);
+  return ranges === "" ? "" : `T${ranges}`;
+}
+
+/** 4 → "4 TC", 0 → "0 TC" (a real value, e.g. SK2001), null (no summary row) → "? TC". */
+export function formatCredits(credits: number | null): string {
+  return `${credits ?? "?"} TC`;
 }
 
 /** Lab weeks are listed one by one: [6,10,12,14] → "6,10,12,14". */

@@ -1,4 +1,4 @@
-import type { Course, Day, Group, ParseResult, ParseWarning, Session } from "./types";
+import type { Course, Day, Group, ParseResult, ParseWarning, ParseWarningCode, Session } from "./types";
 
 // ---------------------------------------------------------------------------
 // Patterns. Vietnamese text is matched after NFC normalization; `\b` is avoided
@@ -22,8 +22,8 @@ const INTEGER = /^\d+$/;
 const DAY_PREFIX = /^(?:Thứ\s*([2-7])|Chủ\s*nhật)(?=\s|$)/;
 /** One cell of the periods column: "-" or a period number. */
 const PERIOD_TOKEN = /^(?:-|\d{1,2})$/;
-/** Room code: "C5-202", "B10-207". There are no online classes. */
-const ROOM = /^[A-Z]\d{1,2}-\d{3}$/;
+/** Room code: "C5-202", "B10-207", "C5-HOITRUONG", "H1-GDH1". There are no online classes. */
+const ROOM = /^[A-Z]\d{1,2}-[A-Z0-9]+$/;
 const CAMPUS = /^[12]$/;
 /** Weeks string: digits and "-" only, e.g. "1234567-90123456-----". */
 const WEEKS = /^[\d-]+$/;
@@ -47,8 +47,19 @@ interface ParserState {
   group: Group | null;
 }
 
+/** A problem found on one line: code + params for the UI, plus the English text. */
+interface Issue {
+  code: ParseWarningCode;
+  params: Record<string, unknown>;
+  message: string;
+}
+
+function issue(code: ParseWarningCode, message: string, params: Record<string, unknown> = {}): Issue {
+  return { code, params, message };
+}
+
 /** Result of parsing one line: a value plus non-fatal notes, or a fatal error. */
-type LineResult<T> = { ok: true; value: T; notes: string[] } | { ok: false; error: string };
+type LineResult<T> = { ok: true; value: T; notes: Issue[] } | { ok: false; error: Issue };
 
 /** Group-line columns whose position depends on the layout (tabs vs. spaces). */
 interface GroupColumns {
@@ -71,7 +82,7 @@ interface SessionFields {
 /** Decoded numbers plus non-fatal notes. */
 interface Decoded {
   values: number[];
-  notes: string[];
+  notes: Issue[];
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +104,7 @@ export function parse(text: string): ParseResult {
       handleLine(state, line, index + 1);
     } catch (error) {
       // Last-resort guard so a parser bug never breaks the caller.
-      warn(state, index + 1, line, `internal parser error: ${String(error)}`);
+      warn(state, index + 1, line, issue("internal-error", `internal parser error: ${String(error)}`, { error: String(error) }));
     }
   });
 
@@ -127,7 +138,7 @@ function handleLine(state: ParserState, line: string, lineNo: number): void {
   } else if (GROUP_ID.test(firstToken(line))) {
     handleGroupLine(state, line, lineNo);
   } else {
-    warn(state, lineNo, line, "unrecognized line; skipped");
+    warn(state, lineNo, line, issue("unrecognized-line", "unrecognized line; skipped"));
   }
 }
 
@@ -143,8 +154,8 @@ function firstToken(line: string): string {
   return line.split(/\s+/)[0];
 }
 
-function warn(state: ParserState, line: number, text: string, message: string): void {
-  state.warnings.push({ line, text, message });
+function warn(state: ParserState, line: number, text: string, found: Issue): void {
+  state.warnings.push({ line, text, message: found.message, code: found.code, params: found.params });
 }
 
 /** Opens a new course; later group lines belong to it. */
@@ -167,7 +178,7 @@ function handleGroupLine(state: ParserState, line: string, lineNo: number): void
   // Reset first so sessions under a rejected group never attach to the previous one.
   state.group = null;
   if (!state.course) {
-    warn(state, lineNo, line, "group line before any course header; skipped");
+    warn(state, lineNo, line, issue("group-before-course", "group line before any course header; skipped"));
     return;
   }
   const result = parseGroupLine(line);
@@ -183,7 +194,7 @@ function handleGroupLine(state: ParserState, line: string, lineNo: number): void
 /** Parses a session line and attaches it to the current group. */
 function handleSessionLine(state: ParserState, line: string, lineNo: number): void {
   if (!state.group) {
-    warn(state, lineNo, line, "session line without a valid group above it; skipped");
+    warn(state, lineNo, line, issue("session-without-group", "session line without a valid group above it; skipped"));
     return;
   }
   const result = parseSessionLine(line);
@@ -204,18 +215,20 @@ function handleSessionLine(state: ParserState, line: string, lineNo: number): vo
 function parseGroupLine(line: string): LineResult<Group> {
   const tokens = line.split(/\s+/);
   const id = GROUP_ID.exec(tokens[0]);
-  if (!id) return { ok: false, error: `invalid group id "${tokens[0]}"; skipped` };
+  if (!id) return { ok: false, error: issue("invalid-group-id", `invalid group id "${tokens[0]}"; skipped`, { id: tokens[0] }) };
   const theoryGroup = id[1];
   const practiceGroup = id[2] ?? null;
 
   const columns =
     (line.includes("\t") ? groupColumnsFromCells(line, theoryGroup, practiceGroup) : null) ??
     groupColumnsFromTokens(tokens);
-  if (!columns) return { ok: false, error: "group line has no registered/capacity (e.g. 34/40); skipped" };
+  if (!columns) {
+    return { ok: false, error: issue("missing-registered-capacity", "group line has no registered/capacity (e.g. 34/40); skipped") };
+  }
 
   return {
     ok: true,
-    notes: columns.language ? [] : ["group line has no language (V/TA)"],
+    notes: columns.language ? [] : [issue("missing-language", "group line has no language (V/TA)")],
     value: {
       id: id[0],
       theoryGroup,
@@ -294,7 +307,7 @@ function lastInteger(tokens: string[]): number | null {
 
 function parseSessionLine(line: string): LineResult<Session> {
   const dayMatch = DAY_PREFIX.exec(line);
-  if (!dayMatch) return { ok: false, error: "session line has no day; skipped" };
+  if (!dayMatch) return { ok: false, error: issue("session-no-day", "session line has no day; skipped") };
   const day = (dayMatch[1] ? Number(dayMatch[1]) : 8) as Day;
 
   const fields =
@@ -340,16 +353,16 @@ function sessionFieldsFromTokens(afterDay: string): SessionFields {
 
 /** Validates raw fields and turns them into a Session. */
 function buildSession(day: Day, fields: SessionFields): LineResult<Session> {
-  if (!ROOM.test(fields.room)) return { ok: false, error: "session line has no room (e.g. C5-202); skipped" };
-  if (!fields.weeks) return { ok: false, error: "session line has no weeks string; skipped" };
+  if (!ROOM.test(fields.room)) return { ok: false, error: issue("session-no-room", "session line has no room (e.g. C5-202); skipped") };
+  if (!fields.weeks) return { ok: false, error: issue("session-no-weeks", "session line has no weeks string; skipped") };
   const periods = decodePeriods(fields.periodTokens);
-  if (periods.values.length === 0) return { ok: false, error: "session line has no periods; skipped" };
+  if (periods.values.length === 0) return { ok: false, error: issue("session-no-periods", "session line has no periods; skipped") };
 
   const weeks = decodeWeeks(fields.weeks);
   const campus = parseCampus(fields.campus);
   const notes = [...periods.notes, ...weeks.notes];
-  if (campus === null) notes.push(`missing or unknown campus "${fields.campus}"`);
-  if (weeks.values.length === 0) notes.push("weeks string has no teaching week");
+  if (campus === null) notes.push(issue("unknown-campus", `missing or unknown campus "${fields.campus}"`, { campus: fields.campus }));
+  if (weeks.values.length === 0) notes.push(issue("no-teaching-week", "weeks string has no teaching week"));
 
   return {
     ok: true,
@@ -377,11 +390,16 @@ function decodePeriods(tokens: string[]): Decoded {
     if (period !== index + 1) misplaced = true;
   });
 
-  const notes: string[] = [];
+  const notes: Issue[] = [];
   if (tokens.length !== PERIOD_COLUMNS) {
-    notes.push(`expected ${PERIOD_COLUMNS} period columns, found ${tokens.length}`);
+    notes.push(
+      issue("period-column-count", `expected ${PERIOD_COLUMNS} period columns, found ${tokens.length}`, {
+        expected: PERIOD_COLUMNS,
+        found: tokens.length,
+      }),
+    );
   } else if (misplaced) {
-    notes.push("a period number does not match its column");
+    notes.push(issue("period-misplaced", "a period number does not match its column"));
   }
   return { values, notes };
 }
@@ -400,7 +418,7 @@ function decodeWeeks(text: string): Decoded {
     if (Number(text[index]) !== week % 10) mismatched.push(week);
   }
   const notes = mismatched.length
-    ? [`weeks string digit does not match week ${mismatched.join(", ")}; used its position`]
+    ? [issue("week-digit-mismatch", `weeks string digit does not match week ${mismatched.join(", ")}; used its position`, { weeks: mismatched })]
     : [];
   return { values, notes };
 }

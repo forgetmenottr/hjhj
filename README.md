@@ -1,32 +1,52 @@
-# React + TypeScript + Vite
+# Xếp thời khoá biểu HCMUT
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Ứng dụng web giúp sinh viên HCMUT chọn nhóm lớp cho 5–6 môn trong đợt đăng ký môn học. Bạn dán dữ liệu copy từ **trang đăng ký môn học**, chọn yêu cầu (cơ sở, ngày nghỉ, ngôn ngữ, còn chỗ, tránh giảng viên…), và ứng dụng tìm các thời khoá biểu không trùng giờ phù hợp nhất. Nếu không lịch nào đáp ứng hết yêu cầu, ứng dụng đưa ra lịch gần nhất và ghi rõ yêu cầu nào bị vi phạm.
 
-Currently, two official plugins are available:
+Trang web: `https://<tên-tài-khoản>.github.io/tkb_web/` (xem phần [Triển khai](#triển-khai)).
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Các bước sử dụng
 
-## React Compiler
+1. **Dán dữ liệu.** Mở trang đăng ký môn học, tìm môn, bôi đen và copy **cả khối** từ dòng `STT` đến hết danh sách nhóm lớp, rồi dán vào ô và bấm “Thêm môn”.
+   - Có thể dán **từng môn một**, hoặc **nhiều môn cùng lúc** (mỗi môn có dòng `STT` và dòng tóm tắt riêng; số `STT` lặp lại cũng không sao).
+   - Dán lại một môn sẽ thay bản cũ (ví dụ để cập nhật số đã đăng ký).
+   - Chỉ hỗ trợ trang **đăng ký môn học**; trang kết quả đăng ký không dùng được.
+2. **Kiểm tra.** Xem lại nhóm lớp, lịch học và cảnh báo khi đọc dữ liệu. Nếu đã biết sẽ học nhóm nào, bấm “Chọn nhóm này”.
+3. **Yêu cầu.** Đặt từng yêu cầu là *Bắt buộc* hoặc *Ưu tiên*, và chỉnh mức độ mong muốn (ít ngày lên trường, lịch gọn, tránh tiết 1–2…).
+4. **Kết quả.** Xem 5 lịch tốt nhất dạng lưới theo tuần (chọn “Tất cả” hoặc từng tuần), điểm và vi phạm. “Giữ nhóm này” để khoá một nhóm; lịch được xếp lại tự động.
+5. **Đăng ký.** Danh sách mã nhóm cần đăng ký, nút sao chép, ô “Đã đăng ký”. Nếu nhóm đã đầy khi đăng ký, bấm “Đã đầy — tìm nhóm khác”: ứng dụng loại nhóm đó, giữ nguyên các môn còn lại và xếp lại. Xuất lịch ra tệp `.ics` (Google Calendar, Lịch điện thoại), ảnh PNG hoặc in.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Quyền riêng tư
 
-## Expanding the Oxlint configuration
+Mọi dữ liệu nằm **trong trình duyệt của bạn**. Ứng dụng không có máy chủ, không cần tài khoản và không gửi dữ liệu đi đâu. Nội dung đã dán, yêu cầu và danh sách đã đăng ký được lưu trong `localStorage` của trình duyệt (khoá `tkb:v1`); xoá dữ liệu trang web là xoá hết.
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Phát triển
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+Cần Node.js 24 (hoặc ≥ 20.19).
+
+```bash
+npm install
+npm run dev       # máy chủ phát triển: http://localhost:5173/
+npm test          # Vitest: parser, timing, solver, giao diện (jsdom), tương phản màu…
+npm run lint      # oxlint
+npm run build     # tsc -b rồi build vào dist/ (base = /tkb_web/)
+npm run preview   # xem bản build: http://localhost:4173/tkb_web/
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Cấu trúc
+
+```
+src/lib/parser/   đọc văn bản copy từ trang đăng ký → môn, nhóm, buổi học (+ cảnh báo có mã)
+src/lib/timing/   mặt nạ bit thời gian (30 tuần × 7 ngày × 16 tiết), kiểm tra trùng giờ
+src/lib/solver/   tìm top-K lịch: lọc, gộp nhóm tương đương, DFS + bảng xung đột, chấm điểm tăng dần, nới yêu cầu
+src/lib/export/   tệp .ics (RFC 5545), bố cục ảnh PNG, giờ các tiết
+src/lib/view/     hàm hiển thị thuần: khối lưới, nhãn tuần, định dạng, bảng màu
+src/app/          reducer, lưu trữ, Web Worker (useSolver), thông điệp tiếng Việt, sao chép / tải tệp
+src/components/   giao diện React (Tailwind, Catppuccin Mocha)
+tests/            Vitest; tests/fixtures/ là dữ liệu thật copy từ trang đăng ký
+```
+
+Mỗi thư mục trong `src/lib/` là hàm thuần (không DOM, không React) và có README riêng. Đặc tả đầy đủ: [SPEC.md](SPEC.md).
+
+## Triển khai
+
+GitHub Actions (`.github/workflows/deploy.yml`) chạy test, lint, build rồi đưa `dist/` lên GitHub Pages mỗi khi push vào `main`. Lần đầu cần bật: **Settings → Pages → Source: GitHub Actions**. `base` của Vite lấy theo tên repo, nên trang nằm ở `https://<tên-tài-khoản>.github.io/<tên-repo>/`.

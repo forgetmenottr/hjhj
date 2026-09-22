@@ -105,7 +105,8 @@ conflicts(a, b) === intersects(a.mask, b.mask) // stops at the first overlapping
 
 ## Warnings
 
-`buildMasks` never throws. It returns `TimeWarning { courseCode, groupId, message }` when:
+`buildMasks` never throws. It returns `TimeWarning { courseCode, groupId, message, code, params }`
+(`code` is one of `TIME_WARNING_CODES`) when:
 
 - **A session has slots outside weeks 1–30 or periods 1–16.** Those slots are
   skipped, with one warning per session (not per slot).
@@ -114,3 +115,6 @@ conflicts(a, b) === intersects(a.mask, b.mask) // stops at the first overlapping
 - **A course code or a group id within a course appears again.** The later
   occurrence wins: a re-pasted course replaces the old one at the old one's
   position, so keys stay unique. For a course-level warning, `groupId` is `""`.
+- **A group has no session** (`group-no-sessions`). Its mask is empty, so it
+  would fit into any schedule for free; this usually means the parser skipped
+  its session lines.

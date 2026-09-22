@@ -26,6 +26,7 @@ Out of scope:
 - Input is NFC-normalized; NBSP = space.
 - Fixtures: tests/fixtures/CO2007.txt, CO2011.txt (+ any other real *.txt there).
 - Duplicates: when a course or group key appears twice, the LATER occurrence wins (a re-pasted course replaces the old one); emit a warning. The parser keeps both copies; `buildMasks()` applies this rule.
+- When several courses are copied at once, each course block has its own STT header and summary row (the STT value may repeat, e.g. all "1"); credits are matched by course code.
 
 ## 4. User flow
 1. Paste: user pastes 5–6 courses (one at a time or all at once).
@@ -34,6 +35,7 @@ Out of scope:
 3. Preferences: user sets requirements, marks each as Required or Preferred, adjusts weights. Saved to localStorage.
 4. Results: top-5 timetables as weekly grids with a week selector, score breakdown, and violated requirements. User can lock a group and re-run.
 5. Register: a checklist of group ids per course (e.g. "CO2007 → L01_L02") with a copy button. "This group is full" button excludes that group, keeps the other locked choices, and re-runs.
+   The "Đã đầy — tìm nhóm khác" (group is full) action is available in Step 4 (picks list) and Step 5 (checklist).
 
 ## 5. Data flow & modules
 ```
@@ -73,9 +75,9 @@ Equivalent-group collapsing: within a course, groups with identical time masks A
 ## 8. Solver
 1. Filter each course's groups by hard constraints.
 2. Order courses by ascending number of remaining groups (MRV).
-3. DFS/backtracking: pick one group per course; prune on bitmask conflict.
-4. On a complete assignment, compute score; keep top-K (default 5) in a min-heap.
-5. Optional branch & bound using an upper-bound score estimate.
+3. DFS/backtracking: pick one group per course; prune on bitmask conflict (Phase 6: looked up in a pairwise candidate conflict table built once per search).
+4. On a complete assignment, compute score; keep top-K (default 5) in a min-heap. (Phase 6: scored incrementally — only the (week, day) cells a pick touches are updated — with results identical to a full rescan.)
+5. Optional branch & bound using an upper-bound score estimate. (Not used: several metrics are not monotone, so no cheap admissible bound exists; see src/lib/solver/README.md.)
 6. Phase 3 `solve()` is a pure function; Phase 4 wraps it in a Web Worker so the UI shows progress and can cancel.
 
 ## 9. Tech stack
@@ -87,7 +89,8 @@ src/lib/parser/     types.ts, parse.ts, index.ts, README.md
 src/lib/timing/     constants.ts, mask.ts, build.ts, conflicts.ts, index.ts, README.md
 src/lib/solver/     types.ts, constants.ts, filter.ts, equivalence.ts, score.ts, search.ts, solve.ts, index.ts, README.md
                     (protocol.ts, worker.ts: Phase 4)
-src/lib/view/       pure display helpers (grid blocks, labels)
+src/lib/export/     ics.ts (RFC 5545), periods.ts (period times), image.ts (PNG layout)
+src/lib/view/       pure display helpers (grid blocks, week labels, labels, palette)
 src/app/            reducer state, storage, paste splitting, useSolver hook
 src/components/     PasteInput, CoursePreview, PreferencesForm, TimetableGrid, ResultTabs, Checklist, ...
 src/App.tsx         App flow (Paste → Preview → Preferences → Results)

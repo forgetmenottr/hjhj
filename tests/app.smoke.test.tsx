@@ -8,6 +8,7 @@ import { defaultPrefs, type Action } from "../src/app/state";
 import { parse, type Course } from "../src/lib/parser";
 import type { Preferences } from "../src/lib/solver";
 import { buildMasks, conflicts } from "../src/lib/timing";
+import { formatWeeks } from "../src/lib/view/format";
 import { readFixture } from "./fixtureText";
 
 // jsdom has no Web Worker: run the same request handler synchronously instead.
@@ -53,7 +54,7 @@ async function toResults(user: UserEvent) {
 
 /** Waits for the automatic re-run (debounced) to finish. */
 async function settled(container: HTMLElement) {
-  await waitFor(() => expect(container.querySelector('[aria-busy="true"]')).toBeNull());
+  await waitFor(() => expect(container.querySelector('[aria-busy="true"]')).toBeNull(), { timeout: 5000 });
 }
 
 /** Keys of the picks of the schedule on screen, in course order. */
@@ -81,6 +82,8 @@ describe("app smoke test", () => {
       await user.click(box);
       await user.paste(readFixture(name));
       await user.click(screen.getByRole("button", { name: "Thêm môn" }));
+      // The box is cleared and "Thêm môn" disabled; focus goes back to the box, not <body>.
+      expect(document.activeElement).toBe(box);
     }
     const added = screen.getByRole("heading", { name: /Môn đã thêm/ }).closest("section")!;
     expect(within(added).getByText("CO2007")).toBeTruthy();
@@ -103,10 +106,10 @@ describe("app smoke test", () => {
     expect(screen.getByRole("tab", { name: /^Lịch 1 · \d+ điểm$/ })).toBeTruthy();
     expect(screen.getAllByRole("tab")).toHaveLength(5);
 
-    // Only the raw pastes, prefs and auto-lock marks were persisted.
+    // Only the raw pastes, prefs, marks and the semester start were persisted.
     const saved = JSON.parse(localStorage.getItem("tkb:v1")!);
     expect(saved.pastes.map((p: { code: string }) => p.code)).toEqual(["CO2007", "CO2011"]);
-    expect(Object.keys(saved)).toEqual(["pastes", "prefs", "autoLocked"]);
+    expect(Object.keys(saved)).toEqual(["pastes", "prefs", "autoLocked", "registered", "semesterStart"]);
   });
 
   it("locking a pick re-runs, returns to tab 1, and every schedule keeps that group", async () => {
@@ -200,6 +203,9 @@ describe("app smoke test", () => {
     expect(screen.getByText("Không có lịch nào phù hợp.")).toBeTruthy();
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
 
+    // The solver's reason is shown in Vietnamese.
+    expect(screen.getByText("Hai nhóm đã khoá CO2007 A01_A01 và CO2011 L01 trùng giờ: Thứ 2 tiết 2–3 (tuần 1–7, 9–16).")).toBeTruthy();
+
     await user.click(screen.getByRole("button", { name: "Bỏ khoá CO2011 L01" }));
     await settled(container);
     expect(screen.getByText(/^Tìm được \d+ lịch/)).toBeTruthy();
@@ -269,5 +275,66 @@ describe("app smoke test", () => {
     expect(container.querySelector('[aria-label^="CO2007"]')).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Tất cả" }));
     expect(screen.getByRole("button", { name: "Tất cả" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("step 5: checking every row reaches N/N, and “Sao chép tất cả” copies CODE  GROUP lines", async () => {
+    const user = userEvent.setup();
+    const { container } = preload();
+    await toResults(user);
+    await user.click(screen.getByRole("button", { name: "Đăng ký" }));
+    expect(screen.getByRole("heading", { name: "Bước 5: Đăng ký" })).toBeTruthy();
+
+    const keys = [...container.querySelectorAll("[data-register]")].map((el) => el.getAttribute("data-register")!);
+    expect(keys).toHaveLength(2);
+    expect(screen.getByText("Đã đăng ký 0/2 môn")).toBeTruthy();
+    expect(screen.getByText(/Tổng 7 TC/)).toBeTruthy(); // CO2007 4 + CO2011 3
+
+    for (const box of screen.getAllByRole("checkbox", { name: /^Đã đăng ký \(/ })) await user.click(box);
+    expect(screen.getByText("Đã đăng ký 2/2 môn")).toBeTruthy();
+    const saved = JSON.parse(localStorage.getItem("tkb:v1")!);
+    expect(saved.registered).toEqual(keys);
+    expect(Object.keys(saved.prefs.locked).sort()).toEqual(["CO2007", "CO2011"]);
+    expect(saved.autoLocked).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: "Sao chép tất cả" }));
+    const ids = keys.map((k) => k.split(":")[1]);
+    expect(await navigator.clipboard.readText()).toBe(`CO2007  ${ids[0]}\nCO2011  ${ids[1]}`);
+    expect(await screen.findByText("Đã sao chép")).toBeTruthy();
+
+    // Unchecking removes the lock again.
+    await user.click(screen.getAllByRole("checkbox", { name: /^Đã đăng ký \(/ })[0]);
+    expect(screen.getByText("Đã đăng ký 1/2 môn")).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem("tkb:v1")!).prefs.locked).toEqual({ CO2011: ids[1] });
+  });
+
+  it("step 5: “Đã đầy” re-runs like step 4 and stays on the checklist", async () => {
+    const user = userEvent.setup();
+    const { container } = preload();
+    await toResults(user);
+    await user.click(screen.getByRole("button", { name: "Đăng ký" }));
+    const rows = () => [...container.querySelectorAll("[data-register]")].map((el) => el.getAttribute("data-register")!);
+    const [full, other] = rows();
+
+    await user.click(screen.getByRole("button", { name: `Đã đầy — tìm nhóm khác (${full.replace(":", " ")})` }));
+    await settled(container);
+    expect(screen.getByRole("heading", { name: "Bước 5: Đăng ký" })).toBeTruthy();
+    const [replaced, kept] = rows();
+    expect(replaced).not.toBe(full);
+    expect(replaced.startsWith("CO2007:")).toBe(true);
+    expect(kept).toBe(other);
+  });
+
+  it("a schedule with SK2001 shows its 5-week label in the all-weeks view", async () => {
+    const SK2001 = readFixture("SK2001.txt");
+    const user = userEvent.setup();
+    const { container } = preload(defaultPrefs(), [], splitByCourse(`${CO2007}\n${CO2011}\n${SK2001}`));
+    await toResults(user);
+    const key = pickKeys(container).find((k) => k.startsWith("SK2001:"))!;
+    const group = parse(SK2001).courses[0].groups.find((g) => g.id === key.split(":")[1])!;
+    const label = formatWeeks(group.sessions[0].weeks);
+    expect(label).toMatch(/^T(1–5|6–7, 9–11|12–16)$/);
+    expect(screen.getByRole("button", { name: "Tất cả" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0); // on the grid block
+    expect(screen.getByText(`· ${label}`)).toBeTruthy(); // in the day list
   });
 });

@@ -1,5 +1,7 @@
 import type { ReactNode, Ref } from "react";
+import { diagnosticText, timeWarningText } from "../app/messages";
 import type { SolveOutcome, SolverStatus } from "../app/state";
+import type { SolverDiagnostic } from "../lib/solver";
 import { itemLabel } from "../lib/view/format";
 import { AlertIcon, Button, CheckIcon, InfoIcon, RefreshIcon, Spinner } from "./ui";
 
@@ -27,15 +29,15 @@ function Banner({ tone, icon, title, children }: { tone: Tone; icon: ReactNode; 
   );
 }
 
-/** Solver diagnostics come from the library (in English) and are shown as-is. */
-function Diagnostics({ lines }: { lines: string[] }) {
-  if (lines.length === 0) return null;
+/** Solver diagnostics, in Vietnamese (the library's English text if a code is unknown). */
+function Diagnostics({ items }: { items: SolverDiagnostic[] | undefined }) {
+  if (!items || items.length === 0) return null;
   return (
     <div>
       <p className="text-ctp-subtext">Chi tiết từ bộ xếp lịch:</p>
       <ul className="mt-1 list-disc space-y-1 pl-5 break-words">
-        {lines.map((line, i) => (
-          <li key={i}>{line}</li>
+        {items.map((item, i) => (
+          <li key={i}>{diagnosticText(item)}</li>
         ))}
       </ul>
     </div>
@@ -54,6 +56,7 @@ export function StatusBanner({
   error,
   stale,
   hasAutoLocks,
+  quiet = false,
   onCancel,
   onRerun,
   onUndoAutoLocks,
@@ -65,11 +68,14 @@ export function StatusBanner({
   stale: boolean;
   /** Some locks were added by "Đã đầy"; an infeasible result then offers to drop them. */
   hasAutoLocks: boolean;
+  /** Step 5: only running / error / nothing-fits are worth a banner there. */
+  quiet?: boolean;
   onCancel: () => void;
   onRerun: () => void;
   onUndoAutoLocks: () => void;
 }) {
   const result = outcome?.result;
+  const details = result?.diagnosticDetails;
   let main: ReactNode = null;
 
   if (status === "running") {
@@ -89,10 +95,12 @@ export function StatusBanner({
         </Button>
       </Banner>
     );
+  } else if (quiet && result?.status !== "infeasible") {
+    main = null;
   } else if (result?.status === "ok") {
     main = (
       <Banner tone="green" icon={<CheckIcon className="size-5 text-ctp-green" />} title={`Tìm được ${result.schedules.length} lịch không trùng giờ, đáp ứng mọi yêu cầu bắt buộc.`}>
-        <Diagnostics lines={result.diagnostics} />
+        <Diagnostics items={details} />
       </Banner>
     );
   } else if (result?.status === "relaxed") {
@@ -102,7 +110,7 @@ export function StatusBanner({
           Các yêu cầu sau đã tạm chuyển thành ưu tiên (bị trừ điểm rất nặng nếu vi phạm):{" "}
           <strong>{result.relaxed.map(itemLabel).join(", ")}</strong>. Lịch vi phạm có dấu ⚠ trên thẻ lịch; chi tiết ở phần điểm.
         </p>
-        <Diagnostics lines={result.diagnostics} />
+        <Diagnostics items={details} />
       </Banner>
     );
   } else if (result?.status === "infeasible" && hasAutoLocks) {
@@ -112,14 +120,14 @@ export function StatusBanner({
         <Button variant="primary" onClick={onUndoAutoLocks}>
           <RefreshIcon className="size-4" /> Thử lại, không giữ các môn khác
         </Button>
-        <Diagnostics lines={result.diagnostics} />
+        <Diagnostics items={details} />
       </Banner>
     );
   } else if (result?.status === "infeasible") {
     main = (
       <Banner tone="red" icon={<AlertIcon className="size-5 text-ctp-red" />} title="Không có lịch nào phù hợp.">
         <p>Mọi cách chọn nhóm đều bị trùng giờ hoặc bị loại. Hãy bỏ bớt nhóm đã khoá / đã loại, bớt yêu cầu hoặc đổi môn.</p>
-        <Diagnostics lines={result.diagnostics} />
+        <Diagnostics items={details} />
       </Banner>
     );
   } else {
@@ -133,7 +141,7 @@ export function StatusBanner({
   return (
     <div ref={ref} tabIndex={-1} role="status" aria-live="polite" className="space-y-3 focus:outline-none">
       {main}
-      {stale && status !== "running" && (
+      {stale && !quiet && status !== "running" && (
         <Banner tone="yellow" icon={<InfoIcon className="size-5 text-ctp-yellow" />} title="Kết quả đã cũ — chạy lại">
           <p>Danh sách môn hoặc yêu cầu đã thay đổi sau lần xếp lịch này.</p>
           <Button variant="primary" onClick={onRerun}>
@@ -141,13 +149,13 @@ export function StatusBanner({
           </Button>
         </Banner>
       )}
-      {outcome && outcome.maskWarnings.length > 0 && (
+      {!quiet && outcome && outcome.maskWarnings.length > 0 && (
         <Banner tone="yellow" icon={<AlertIcon className="size-5 text-ctp-yellow" />} title="Cảnh báo khi dựng lịch">
           <ul className="list-disc space-y-1 pl-5">
             {outcome.maskWarnings.map((w, i) => (
               <li key={i}>
                 {w.courseCode}
-                {w.groupId && `:${w.groupId}`} — {w.message}
+                {w.groupId && ` ${w.groupId}`} — {timeWarningText(w)}
               </li>
             ))}
           </ul>

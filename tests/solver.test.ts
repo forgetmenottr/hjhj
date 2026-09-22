@@ -8,13 +8,22 @@ import {
   DEFAULT_PREFERENCES,
   groupFeatures,
   normalizePreferences,
-  solve,
+  solve as solveRaw,
+  SOLVER_DIAGNOSTIC_CODES,
   violates,
   type ConstraintName,
   type Preferences,
   type Schedule,
   type SolveResult,
 } from "../src/lib/solver";
+
+/** Every result the tests below produce; the last test checks that each diagnostic has a code. */
+const results: SolveResult[] = [];
+function solve(courses: IndexedCourse[], p: Preferences): SolveResult {
+  const result = solveRaw(courses, p);
+  results.push(result);
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures and helpers
@@ -459,5 +468,23 @@ describe("other", () => {
     expect(result.stats.truncated).toBe(false);
     expect(result.stats.ms).toBeLessThan(2000);
     expectConflictFree(result);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostic codes (runs last: checks every result produced above)
+// ---------------------------------------------------------------------------
+
+describe("diagnostic codes", () => {
+  it("every diagnostic emitted by the tests above has a known code, in step with the English text", () => {
+    const details = results.flatMap((r) => r.diagnosticDetails);
+    expect(details.length).toBeGreaterThanOrEqual(5);
+    for (const result of results) {
+      expect(result.diagnosticDetails.map((d) => d.message)).toEqual(result.diagnostics);
+    }
+    for (const detail of details) {
+      expect(SOLVER_DIAGNOSTIC_CODES, detail.message).toContain(detail.code);
+      expect(detail.params).toBeTypeOf("object");
+    }
   });
 });

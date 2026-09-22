@@ -2,13 +2,13 @@ import type { Step } from "../app/state";
 import { STEP_LABELS } from "../lib/view/format";
 import { CheckIcon } from "./ui";
 
-const STEPS: Step[] = [1, 2, 3, 4];
+const STEPS: Step[] = [1, 2, 3, 4, 5];
 
-/** 1 Dán dữ liệu · 2 Kiểm tra · 3 Yêu cầu · 4 Kết quả. Disabled steps cannot be entered yet. */
+/** 1 Dán dữ liệu · 2 Kiểm tra · 3 Yêu cầu · 4 Kết quả · 5 Đăng ký. Disabled steps cannot be entered yet. */
 export function Stepper({ current, enabled, onSelect }: { current: Step; enabled: (step: Step) => boolean; onSelect: (step: Step) => void }) {
   return (
     <nav aria-label="Các bước">
-      <ol className="grid grid-cols-4 gap-1 md:gap-3">
+      <ol className="grid grid-cols-5 gap-1 md:gap-3">
         {STEPS.map((step) => {
           const active = step === current;
           const done = step < current;

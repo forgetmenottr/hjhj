@@ -4,7 +4,8 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
 const VARIANTS: Record<Variant, string> = {
-  primary: "bg-ctp-mauve text-ctp-crust hover:bg-ctp-lavender disabled:bg-ctp-surface1 disabled:text-ctp-subtext",
+  // Disabled: subtext on surface0 (5.6:1); on surface1 it was 4.1:1.
+  primary: "bg-ctp-mauve text-ctp-crust hover:bg-ctp-lavender disabled:bg-ctp-surface0 disabled:text-ctp-subtext",
   secondary: "bg-ctp-surface0 text-ctp-text hover:bg-ctp-surface1 disabled:text-ctp-subtext",
   ghost: "text-ctp-subtext hover:bg-ctp-surface0 hover:text-ctp-text",
   danger: "text-ctp-red hover:bg-ctp-surface0",
@@ -141,6 +142,32 @@ export const BanIcon = (p: { className?: string }) => (
     <path d="m5.7 5.7 12.6 12.6" />
   </Svg>
 );
+export const CopyIcon = (p: { className?: string }) => (
+  <Svg {...p}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+  </Svg>
+);
+export const DownloadIcon = (p: { className?: string }) => (
+  <Svg {...p}>
+    <path d="M12 3v12M7 10l5 5 5-5M4 21h16" />
+  </Svg>
+);
+export const PrintIcon = (p: { className?: string }) => (
+  <Svg {...p}>
+    <path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2" />
+    <rect x="6" y="14" width="12" height="7" />
+  </Svg>
+);
+
+/** A short message above the footer. The live region is always there, so screen readers hear each message. */
+export function Toast({ message }: { message: string | null }) {
+  return (
+    <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-24 z-20 flex justify-center px-4 print:hidden">
+      {message && <p className="rounded-xl bg-ctp-text px-4 py-2 text-sm font-semibold text-ctp-base shadow-lg">{message}</p>}
+    </div>
+  );
+}
 
 export function Spinner({ className = "size-5" }: { className?: string }) {
   return (

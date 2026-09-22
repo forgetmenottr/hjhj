@@ -61,7 +61,7 @@ function Chip({
   const look = pressed
     ? "bg-ctp-mauve text-ctp-crust"
     : muted
-      ? "border border-dashed border-ctp-surface1 text-ctp-subtext/70 hover:bg-ctp-surface0"
+      ? "border border-dashed border-ctp-overlay1 text-ctp-subtext hover:bg-ctp-surface0"
       : "bg-ctp-surface0 text-ctp-text hover:bg-ctp-surface1";
   return (
     <button

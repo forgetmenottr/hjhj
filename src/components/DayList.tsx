@@ -1,10 +1,19 @@
-import { usedDays, type GridBlock } from "../lib/view/grid";
-import { campusLabel, DAY_LONG, formatWeekList } from "../lib/view/format";
+import { usedDays, weekLabel, type GridBlock } from "../lib/view/grid";
+import { campusLabel, DAY_LONG } from "../lib/view/format";
 import { courseColor } from "./courseColor";
 import { LockIcon } from "./ui";
 
 /** Mobile view (below md): one section per day, sessions in period order. */
-export function DayList({ blocks, isLocked = () => false }: { blocks: GridBlock[]; isLocked?: (block: GridBlock) => boolean }) {
+export function DayList({
+  blocks,
+  standard = null,
+  isLocked = () => false,
+}: {
+  blocks: GridBlock[];
+  /** The usual term; theory sessions outside it get a week label ("T12–16"). */
+  standard?: number[] | null;
+  isLocked?: (block: GridBlock) => boolean;
+}) {
   return (
     <div className="space-y-4">
       {usedDays(blocks).map((day) => (
@@ -32,7 +41,7 @@ export function DayList({ blocks, isLocked = () => false }: { blocks: GridBlock[
                     </p>
                     <p className="text-ctp-text/90">
                       {b.room} · {campusLabel(b.campus)}
-                      {b.kind === "lab" && ` · tuần ${formatWeekList(b.weeks)}`}
+                      {weekLabel(b, standard) && <span className="font-semibold"> · {weekLabel(b, standard)}</span>}
                     </p>
                   </div>
                 </li>

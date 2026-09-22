@@ -1,6 +1,6 @@
-import type { Day } from "../parser";
+import type { Course, Day } from "../parser";
 import type { Schedule } from "../solver";
-import { campusLabel, contiguousRuns, DAY_LONG, formatRanges, formatWeekList } from "./format";
+import { campusLabel, contiguousRuns, DAY_LONG, formatRanges, formatWeekList, formatWeeks } from "./format";
 
 /** One rectangle on the weekly grid: a run of consecutive periods of one session. */
 export interface GridBlock {
@@ -65,6 +65,60 @@ export function blocksForWeek(blocks: GridBlock[], week: WeekFilter): GridBlock[
 /** Weeks in which at least one block has a class, ascending. */
 export function weeksWithClasses(blocks: GridBlock[]): number[] {
   return [...new Set(blocks.flatMap((b) => b.weeks))].sort((a, b) => a - b);
+}
+
+/** Most votes first; ties: more weeks, then the smaller key (deterministic). */
+function bestWeeks(counts: Map<string, { weeks: number[]; count: number }>): { key: string; weeks: number[] } | null {
+  let best: { key: string; weeks: number[]; count: number } | null = null;
+  for (const [key, entry] of counts) {
+    const better =
+      best === null ||
+      entry.count > best.count ||
+      (entry.count === best.count && (entry.weeks.length > best.weeks.length || (entry.weeks.length === best.weeks.length && key < best.key)));
+    if (better) best = { key, ...entry };
+  }
+  return best;
+}
+
+/**
+ * The usual term of the pasted courses, e.g. [1..7, 9..16]: each course votes
+ * for its most common weeks list among theory sessions, and the list with the
+ * most votes wins. Voting per course keeps a course with many short groups
+ * (SK2001: 64 five-week groups) from outvoting the rest. Null if no course has
+ * a theory session.
+ */
+export function standardWeeks(courses: Course[]): number[] | null {
+  const votes = new Map<string, { weeks: number[]; count: number }>();
+  for (const course of courses) {
+    const counts = new Map<string, { weeks: number[]; count: number }>();
+    for (const group of course.groups) {
+      for (const session of group.sessions) {
+        if (session.kind !== "theory" || session.weeks.length === 0) continue;
+        const key = session.weeks.join(",");
+        const entry = counts.get(key) ?? { weeks: session.weeks, count: 0 };
+        entry.count++;
+        counts.set(key, entry);
+      }
+    }
+    const top = bestWeeks(counts);
+    if (!top) continue;
+    const entry = votes.get(top.key) ?? { weeks: top.weeks, count: 0 };
+    entry.count++;
+    votes.set(top.key, entry);
+  }
+  return bestWeeks(votes)?.weeks ?? null;
+}
+
+/**
+ * Week text shown on a block: a lab lists its weeks ("tuần 6,10,12,14"); a
+ * theory session outside the usual term gets a compact label ("T12–16");
+ * a theory session in the usual term gets none.
+ */
+export function weekLabel(block: GridBlock, standard: number[] | null): string | null {
+  if (block.kind === "lab") return `tuần ${formatWeekList(block.weeks)}`;
+  if (standard === null) return null;
+  const same = block.weeks.length === standard.length && block.weeks.every((week, i) => week === standard[i]);
+  return same ? null : formatWeeks(block.weeks);
 }
 
 /** First and last period used by any block, or null when there are none. */

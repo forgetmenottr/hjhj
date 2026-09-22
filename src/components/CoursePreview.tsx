@@ -1,7 +1,8 @@
 import { useId, useState } from "react";
+import { parseWarningText } from "../app/messages";
 import type { ParsedPaste } from "../app/pastes";
 import type { Group } from "../lib/parser";
-import { formatSession, isFull } from "../lib/view/format";
+import { formatCredits, formatSession, isFull } from "../lib/view/format";
 import { courseColor } from "./courseColor";
 import { AlertIcon, Badge, BanIcon, ChevronIcon, LockIcon, ToggleButton, UnlockIcon } from "./ui";
 
@@ -77,7 +78,7 @@ function CourseCard({
               {paste.code} · {course?.name ?? "Không đọc được"}
             </span>
             <span className="mt-1 flex flex-wrap gap-1.5">
-              {course?.credits != null && <Badge>{course.credits} tín chỉ</Badge>}
+              {course && <Badge>{formatCredits(course.credits)}</Badge>}
               <Badge tone={groups.length > 0 ? "neutral" : "red"}>{groups.length} nhóm</Badge>
               {paste.warnings.length > 0 && <Badge tone="yellow">{paste.warnings.length} cảnh báo</Badge>}
               {lockedId !== undefined && (
@@ -118,7 +119,7 @@ function CourseCard({
             <ul className="mt-2 space-y-2 text-sm">
               {paste.warnings.map((w, i) => (
                 <li key={i}>
-                  <span className="font-semibold">Dòng {w.line}:</span> {w.message}
+                  <span className="font-semibold">Dòng {w.line}:</span> {parseWarningText(w)}
                   <code className="mt-0.5 block truncate rounded bg-ctp-base px-2 py-1 text-xs text-ctp-subtext">{w.text}</code>
                 </li>
               ))}

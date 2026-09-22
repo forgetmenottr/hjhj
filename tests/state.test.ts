@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { mergePastes, parsePaste, splitByCourse } from "../src/app/pastes";
 import { markFull, undoAutoLocks } from "../src/app/selection";
-import { canGoTo, defaultPrefs, initialState, isResultStale, reducer, responseAction, type Action, type AppState } from "../src/app/state";
+import { canGoTo, defaultPrefs, initialState, isResultStale, reducer, responseAction, selectionsOf, type Action, type AppState } from "../src/app/state";
 import { loadSaved, STORAGE_KEY } from "../src/app/storage";
 import { parse } from "../src/lib/parser";
 import { DEFAULT_PREFERENCES } from "../src/lib/solver";
 import { handleRequest } from "../src/lib/solver/protocol";
+import { checklistText, scheduleCredits } from "../src/lib/view/checklist";
 import { readFixture } from "./fixtureText";
 
 const CO2007 = readFixture("CO2007.txt");
@@ -398,19 +399,19 @@ describe("markFullAndRerun", () => {
       { courseCode: "CO2007", groupId: "A01_A01" },
       { courseCode: "CO2011", groupId: "L02" },
     ];
-    const userLock = markFull({ locked: { CO2007: "A01_A01" }, excluded: [], autoLocked: [] }, "CO2011:L02", picks);
-    expect(userLock).toEqual({ locked: { CO2007: "A01_A01" }, excluded: ["CO2011:L02"], autoLocked: [] });
-    const auto = markFull({ locked: {}, excluded: [], autoLocked: [] }, "CO2011:L02", picks);
-    expect(auto).toEqual({ locked: { CO2007: "A01_A01" }, excluded: ["CO2011:L02"], autoLocked: ["CO2007:A01_A01"] });
-    expect(undoAutoLocks(auto)).toEqual({ locked: {}, excluded: ["CO2011:L02"], autoLocked: [] });
+    const userLock = markFull({ locked: { CO2007: "A01_A01" }, excluded: [], autoLocked: [], registered: [] }, "CO2011:L02", picks);
+    expect(userLock).toEqual({ locked: { CO2007: "A01_A01" }, excluded: ["CO2011:L02"], autoLocked: [], registered: [] });
+    const auto = markFull({ locked: {}, excluded: [], autoLocked: [], registered: [] }, "CO2011:L02", picks);
+    expect(auto).toEqual({ locked: { CO2007: "A01_A01" }, excluded: ["CO2011:L02"], autoLocked: ["CO2007:A01_A01"], registered: [] });
+    expect(undoAutoLocks(auto)).toEqual({ locked: {}, excluded: ["CO2011:L02"], autoLocked: [], registered: [] });
     // A pick that is itself excluded (stale result) is not locked.
-    const stale = markFull({ locked: {}, excluded: ["CO2007:A01_A01"], autoLocked: [] }, "CO2011:L02", picks);
-    expect(stale).toEqual({ locked: {}, excluded: ["CO2007:A01_A01", "CO2011:L02"], autoLocked: [] });
+    const stale = markFull({ locked: {}, excluded: ["CO2007:A01_A01"], autoLocked: [], registered: [] }, "CO2011:L02", picks);
+    expect(stale).toEqual({ locked: {}, excluded: ["CO2007:A01_A01", "CO2011:L02"], autoLocked: [], registered: [] });
   });
 });
 
 describe("pruning stale locks and excluded groups", () => {
-  const selections = (state: AppState) => ({ locked: state.prefs.locked, excluded: state.prefs.excluded, autoLocked: state.autoLocked });
+  const selections = (state: AppState) => selectionsOf(state);
 
   it("drops a removed course's entries", () => {
     const done = withResults();
@@ -420,9 +421,10 @@ describe("pruning stale locks and excluded groups", () => {
       locked: { CO2011: idOf(co2011), CO2007: "A01_A01" },
       excluded: [co2007, "CO2011:CC05"],
       autoLocked: [co2011],
+      registered: [],
     });
     state = apply(state, { type: "removeCourse", code: "CO2011" });
-    expect(selections(state)).toEqual({ locked: { CO2007: "A01_A01" }, excluded: [co2007], autoLocked: [] });
+    expect(selections(state)).toEqual({ locked: { CO2007: "A01_A01" }, excluded: [co2007], autoLocked: [], registered: [] });
   });
 
   it("drops entries for a group that is gone after a re-paste, and keeps the rest", () => {
@@ -435,7 +437,7 @@ describe("pruning stale locks and excluded groups", () => {
     expect(before.prefs.locked).toEqual({ CO2007: "A01_A02" });
     const after = apply(before, addPaste(repasted));
     expect(after.notice).toEqual({ added: [], replaced: ["CO2007"], empty: false });
-    expect(selections(after)).toEqual({ locked: {}, excluded: ["CO2007:A01_A01", "CO2007:L01_L01"], autoLocked: [] });
+    expect(selections(after)).toEqual({ locked: {}, excluded: ["CO2007:A01_A01", "CO2007:L01_L01"], autoLocked: [], registered: [] });
   });
 
   it("prunes what was saved when loading", () => {
@@ -448,5 +450,104 @@ describe("pruning stale locks and excluded groups", () => {
     expect(loaded.prefs.excluded).toEqual(["CO2011:L01"]);
     expect(loaded.autoLocked).toEqual(["CO2007:A01_A01"]);
     expect(initialState(loaded)).toMatchObject({ autoLocked: ["CO2007:A01_A01"], selected: 0, autoRun: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Step 5: registration checklist
+// ---------------------------------------------------------------------------
+
+describe("checklist (step 5)", () => {
+  const register = (key: string): Action => ({ type: "register", key });
+  const unregister = (key: string): Action => ({ type: "unregister", key });
+  const toChecklist = (state: AppState) => apply(state, { type: "goTo", step: 5 });
+
+  it("opens once a schedule exists", () => {
+    const pasted = apply(initialState(), addPaste(CO2007), addPaste(CO2011));
+    expect(canGoTo(pasted, 5)).toBe(false);
+    expect(apply(pasted, { type: "goTo", step: 5 }).step).toBe(1); // stays where it was
+    const done = withResults();
+    expect(canGoTo(done, 5)).toBe(true);
+    expect(toChecklist(done).step).toBe(5);
+  });
+
+  it("checking a row is a user lock; unchecking removes it; neither re-runs", () => {
+    const state = toChecklist(withResults());
+    const [co2007, co2011] = pickKeys(state);
+    const checked = apply(state, register(co2007));
+    expect(checked.registered).toEqual([co2007]);
+    expect(checked.prefs.locked).toEqual({ CO2007: idOf(co2007) });
+    expect(checked.autoLocked).toEqual([]);
+    expect(checked.autoRun).toBe(false);
+    expect(apply(checked, register(co2007))).toBe(checked);
+
+    const both = apply(checked, register(co2011));
+    expect(both.registered).toEqual([co2007, co2011]);
+    const unchecked = apply(both, unregister(co2007));
+    expect(unchecked.registered).toEqual([co2011]);
+    expect(unchecked.prefs.locked).toEqual({ CO2011: idOf(co2011) });
+    expect(unchecked.autoRun).toBe(false);
+  });
+
+  it("turns an automatic lock into a user lock, so undoing auto locks keeps it", () => {
+    const state = toChecklist(withResults());
+    const [co2007, co2011] = pickKeys(state);
+    const marked = apply(state, markFullAction(co2007)); // auto-locks co2011
+    expect(marked.autoLocked).toEqual([co2011]);
+    const registered = apply(marked, register(co2011));
+    expect(registered.autoLocked).toEqual([]);
+    expect(apply(registered, { type: "undoAutoLocks" }).prefs.locked).toEqual({ CO2011: idOf(co2011) });
+  });
+
+  it("drops the mark when its lock goes (unlock elsewhere, a different lock, or “Đã đầy” on it)", () => {
+    const state = toChecklist(withResults());
+    const [co2007] = pickKeys(state);
+    const checked = apply(state, register(co2007));
+    expect(apply(checked, unlock("CO2007")).registered).toEqual([]);
+    expect(apply(checked, lock("CO2007", "A01_A01")).registered).toEqual([]);
+    const full = apply(checked, markFullAction(co2007));
+    expect(full.registered).toEqual([]);
+    expect(full.prefs.excluded).toEqual([co2007]);
+  });
+
+  it("“Đã đầy” from step 5 re-runs and stays on step 5, keeping the other row", () => {
+    const state = toChecklist(withResults());
+    const [co2007, co2011] = pickKeys(state);
+    const marked = apply(state, register(co2011), markFullAction(co2007));
+    expect(marked.autoRun).toBe(true);
+    const rerun = run(marked, 2);
+    expect(rerun.step).toBe(5);
+    const [newCo2007, sameCo2011] = pickKeys(rerun);
+    expect(newCo2007).not.toBe(co2007);
+    expect(sameCo2011).toBe(co2011);
+    expect(rerun.registered).toEqual([co2011]);
+  });
+
+  it("prunes marks like locks: removed course, and load from storage", () => {
+    const state = toChecklist(withResults());
+    const [co2007, co2011] = pickKeys(state);
+    const checked = apply(state, register(co2007), register(co2011));
+    expect(apply(checked, { type: "removeCourse", code: "CO2011" }).registered).toEqual([co2007]);
+
+    const pastes = splitByCourse(CO2007);
+    const prefs = { ...defaultPrefs(), locked: { CO2007: idOf(co2007) } };
+    const data = new Map([[STORAGE_KEY, JSON.stringify({ pastes, prefs, registered: [co2007, co2011, "CO2007:A01_A01"] })]]);
+    const loaded = loadSaved({ getItem: (key) => data.get(key) ?? null, setItem: () => {} });
+    expect(loaded.registered).toEqual([co2007]); // CO2011 not pasted; A01_A01 not the locked group
+  });
+
+  it("copies every row as “CODE  GROUP” lines and adds up credits (0 counts, unknown is listed)", () => {
+    const schedule = withResults().result!.result.schedules[0];
+    const [co2007, co2011] = schedule.picks.map((p) => p.group.group.id);
+    expect(checklistText(schedule)).toBe(`CO2007  ${co2007}\nCO2011  ${co2011}`);
+    expect(scheduleCredits(schedule, { CO2007: 4, CO2011: 3 })).toEqual({ total: 7, unknown: [] });
+    expect(scheduleCredits(schedule, { CO2007: 0, CO2011: null })).toEqual({ total: 0, unknown: ["CO2011"] });
+  });
+
+  it("remembers the semester start", () => {
+    const state = apply(initialState(), { type: "setSemesterStart", date: "2026-09-07" });
+    expect(state.semesterStart).toBe("2026-09-07");
+    expect(apply(state, { type: "setSemesterStart", date: "2026-09-07" })).toBe(state);
+    expect(apply(state, { type: "setSemesterStart", date: null }).semesterStart).toBeNull();
   });
 });

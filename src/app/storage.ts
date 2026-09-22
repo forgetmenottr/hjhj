@@ -3,7 +3,10 @@ import type { Paste } from "./pastes";
 import { groupIdsByCourse, pruneSelections } from "./selection";
 import { defaultPrefs } from "./state";
 
-/** Only the raw pasted text, the preferences (with locks) and the auto-lock marks are stored; results never are. */
+/**
+ * Stored: the raw pasted text, the preferences (with locks), the auto-lock and
+ * "Đã đăng ký" marks and the semester start. Results never are.
+ */
 export const STORAGE_KEY = "tkb:v1";
 
 export interface SavedState {
@@ -11,6 +14,10 @@ export interface SavedState {
   prefs: Preferences;
   /** Keys of locks the app added itself (see selection.ts). */
   autoLocked: string[];
+  /** Keys checked "Đã đăng ký" in step 5. */
+  registered: string[];
+  /** Monday of week 1, "YYYY-MM-DD". */
+  semesterStart: string | null;
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
@@ -73,7 +80,14 @@ function readStrings(value: unknown): string[] {
 }
 
 function empty(): SavedState {
-  return { pastes: [], prefs: defaultPrefs(), autoLocked: [] };
+  return { pastes: [], prefs: defaultPrefs(), autoLocked: [], registered: [], semesterStart: null };
+}
+
+/** A real calendar date written as "YYYY-MM-DD", or null. */
+export function readDate(value: unknown): string | null {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : null;
 }
 
 /**
@@ -89,20 +103,27 @@ export function loadSaved(storage: StorageLike | null = browserStorage()): Saved
     const pastes = readPastes(data.pastes);
     const prefs = readPrefs(data.prefs);
     const pruned = pruneSelections(
-      { locked: prefs.locked, excluded: prefs.excluded, autoLocked: readStrings(data.autoLocked) },
+      { locked: prefs.locked, excluded: prefs.excluded, autoLocked: readStrings(data.autoLocked), registered: readStrings(data.registered) },
       groupIdsByCourse(pastes),
     );
-    return { pastes, prefs: { ...prefs, locked: pruned.locked, excluded: pruned.excluded }, autoLocked: pruned.autoLocked };
+    return {
+      pastes,
+      prefs: { ...prefs, locked: pruned.locked, excluded: pruned.excluded },
+      autoLocked: pruned.autoLocked,
+      registered: pruned.registered,
+      semesterStart: readDate(data.semesterStart),
+    };
   } catch {
     return empty();
   }
 }
 
-/** Saves pastes, prefs and auto-lock marks; returns false if storage is unavailable or full. Never throws. */
+/** Saves what SavedState lists; returns false if storage is unavailable or full. Never throws. */
 export function saveState(state: SavedState, storage: StorageLike | null = browserStorage()): boolean {
   try {
     if (!storage) return false;
-    storage.setItem(STORAGE_KEY, JSON.stringify({ pastes: state.pastes, prefs: state.prefs, autoLocked: state.autoLocked }));
+    const { pastes, prefs, autoLocked, registered, semesterStart } = state;
+    storage.setItem(STORAGE_KEY, JSON.stringify({ pastes, prefs, autoLocked, registered, semesterStart }));
     return true;
   } catch {
     return false;
