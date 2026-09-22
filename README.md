@@ -2,7 +2,7 @@
 
 Ứng dụng web giúp sinh viên HCMUT chọn nhóm lớp cho 5–6 môn trong đợt đăng ký môn học. Bạn dán dữ liệu copy từ **trang đăng ký môn học**, chọn yêu cầu (cơ sở, ngày nghỉ, ngôn ngữ, còn chỗ, tránh giảng viên…), và ứng dụng tìm các thời khoá biểu không trùng giờ phù hợp nhất. Nếu không lịch nào đáp ứng hết yêu cầu, ứng dụng đưa ra lịch gần nhất và ghi rõ yêu cầu nào bị vi phạm.
 
-Trang web: `https://<tên-tài-khoản>.github.io/tkb_web/` (xem phần [Triển khai](#triển-khai)).
+Trang web: `https://forgetmenottr.github.io/hjhj/` 
 
 ## Các bước sử dụng
 
@@ -45,8 +45,4 @@ src/components/   giao diện React (Tailwind, Catppuccin Mocha)
 tests/            Vitest; tests/fixtures/ là dữ liệu thật copy từ trang đăng ký
 ```
 
-Mỗi thư mục trong `src/lib/` là hàm thuần (không DOM, không React) và có README riêng. Đặc tả đầy đủ: [SPEC.md](SPEC.md).
-
-## Triển khai
-
-GitHub Actions (`.github/workflows/deploy.yml`) chạy test, lint, build rồi đưa `dist/` lên GitHub Pages mỗi khi push vào `main`. Lần đầu cần bật: **Settings → Pages → Source: GitHub Actions**. `base` của Vite lấy theo tên repo, nên trang nằm ở `https://<tên-tài-khoản>.github.io/<tên-repo>/`.
+p/s: 1g sáng khó ngủ và tôi còn dư usage và không hiểu sao github không cho deploy page khi private nữa nên là dìa dia :)))), just dgaf about this but if ur reading this line i know you did gaf
