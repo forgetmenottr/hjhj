@@ -2,18 +2,28 @@ import type { CSSProperties } from "react";
 import { assignLanes, describeBlock, periodRange, usedDays, type GridBlock } from "../lib/view/grid";
 import { campusLabel, DAY_LONG, formatWeekList } from "../lib/view/format";
 import { courseColor } from "./courseColor";
+import { LockIcon } from "./ui";
 
 /** Height of one period row, in px. */
 const ROW = 48;
 
 /**
  * Weekly grid (md and up): columns = days with classes, rows = used periods.
- * It shows the UNION of all weeks; blocks that share periods on different weeks
- * (e.g. alternating labs) are placed side by side.
+ * `frame` (default: `blocks`) decides the columns and rows, so one week can be
+ * drawn inside the all-weeks frame. Blocks that share periods on different
+ * weeks (e.g. alternating labs) are placed side by side.
  */
-export function TimetableGrid({ blocks }: { blocks: GridBlock[] }) {
-  const days = usedDays(blocks);
-  const range = periodRange(blocks);
+export function TimetableGrid({
+  blocks,
+  frame = blocks,
+  isLocked = () => false,
+}: {
+  blocks: GridBlock[];
+  frame?: GridBlock[];
+  isLocked?: (block: GridBlock) => boolean;
+}) {
+  const days = usedDays(frame);
+  const range = periodRange(frame);
   const placedByDay = new Map(days.map((day) => [day, assignLanes(blocks.filter((b) => b.day === day))]));
   if (!range) return null;
   const periods = Array.from({ length: range.last - range.first + 1 }, (_, i) => range.first + i);
@@ -46,8 +56,8 @@ export function TimetableGrid({ blocks }: { blocks: GridBlock[] }) {
             {(placedByDay.get(day) ?? []).map(({ block, lane, lanes }, i) => (
               <li
                 key={i}
-                title={describeBlock(block)}
-                aria-label={describeBlock(block)}
+                title={describeBlock(block, isLocked(block))}
+                aria-label={describeBlock(block, isLocked(block))}
                 className="course-block absolute overflow-hidden rounded-md px-1.5 py-1 text-xs leading-tight"
                 style={{
                   ...courseColor(block.colorIndex),
@@ -60,6 +70,12 @@ export function TimetableGrid({ blocks }: { blocks: GridBlock[] }) {
                 <p className="flex flex-wrap items-center gap-1 font-semibold">
                   {block.courseCode}
                   {block.kind === "lab" && <span className="rounded bg-ctp-crust/60 px-1 text-[10px] font-bold text-ctp-text">TN</span>}
+                  {isLocked(block) && (
+                    <span className="inline-flex items-center gap-0.5 rounded bg-ctp-crust/60 px-1 text-[10px] font-bold text-ctp-text">
+                      <LockIcon className="size-3" />
+                      Khoá
+                    </span>
+                  )}
                 </p>
                 <p className="text-ctp-text/90">
                   {block.room} · {campusLabel(block.campus)}

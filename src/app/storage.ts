@@ -1,13 +1,16 @@
 import { normalizePreferences, type Preferences } from "../lib/solver";
 import type { Paste } from "./pastes";
+import { groupIdsByCourse, pruneSelections } from "./selection";
 import { defaultPrefs } from "./state";
 
-/** Only the raw pasted text and the preferences are stored; results never are. */
+/** Only the raw pasted text, the preferences (with locks) and the auto-lock marks are stored; results never are. */
 export const STORAGE_KEY = "tkb:v1";
 
 export interface SavedState {
   pastes: Paste[];
   prefs: Preferences;
+  /** Keys of locks the app added itself (see selection.ts). */
+  autoLocked: string[];
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
@@ -59,29 +62,47 @@ function readPrefs(value: unknown): Preferences {
     weights: { ...d.weights, ...w, timeOfDay: { ...d.weights.timeOfDay, ...objectOr(w.timeOfDay) } },
     topK: s.topK ?? d.topK,
     maxNodes: s.maxNodes ?? d.maxNodes,
-    locked: {},
-    excluded: [],
+    locked: objectOr(s.locked),
+    excluded: s.excluded,
   };
   return normalizePreferences(merged as unknown as Preferences);
 }
 
-/** Loads saved pastes and prefs; missing, blocked or corrupt storage → defaults. Never throws. */
+function readStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function empty(): SavedState {
+  return { pastes: [], prefs: defaultPrefs(), autoLocked: [] };
+}
+
+/**
+ * Loads saved pastes, prefs and auto-lock marks; missing, blocked or corrupt
+ * storage → defaults. Locks and excluded keys whose course or group is no
+ * longer pasted are dropped. Never throws.
+ */
 export function loadSaved(storage: StorageLike | null = browserStorage()): SavedState {
   try {
     const text = storage?.getItem(STORAGE_KEY);
-    if (!text) return { pastes: [], prefs: defaultPrefs() };
+    if (!text) return empty();
     const data = objectOr(JSON.parse(text));
-    return { pastes: readPastes(data.pastes), prefs: readPrefs(data.prefs) };
+    const pastes = readPastes(data.pastes);
+    const prefs = readPrefs(data.prefs);
+    const pruned = pruneSelections(
+      { locked: prefs.locked, excluded: prefs.excluded, autoLocked: readStrings(data.autoLocked) },
+      groupIdsByCourse(pastes),
+    );
+    return { pastes, prefs: { ...prefs, locked: pruned.locked, excluded: pruned.excluded }, autoLocked: pruned.autoLocked };
   } catch {
-    return { pastes: [], prefs: defaultPrefs() };
+    return empty();
   }
 }
 
-/** Saves pastes and prefs; returns false if storage is unavailable or full. Never throws. */
+/** Saves pastes, prefs and auto-lock marks; returns false if storage is unavailable or full. Never throws. */
 export function saveState(state: SavedState, storage: StorageLike | null = browserStorage()): boolean {
   try {
     if (!storage) return false;
-    storage.setItem(STORAGE_KEY, JSON.stringify({ pastes: state.pastes, prefs: state.prefs }));
+    storage.setItem(STORAGE_KEY, JSON.stringify({ pastes: state.pastes, prefs: state.prefs, autoLocked: state.autoLocked }));
     return true;
   } catch {
     return false;

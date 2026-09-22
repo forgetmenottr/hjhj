@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { mergePastes, parsePaste, splitByCourse } from "../src/app/pastes";
-import { canGoTo, initialState, isResultStale, reducer, responseAction, type Action, type AppState } from "../src/app/state";
+import { markFull, undoAutoLocks } from "../src/app/selection";
+import { canGoTo, defaultPrefs, initialState, isResultStale, reducer, responseAction, type Action, type AppState } from "../src/app/state";
+import { loadSaved, STORAGE_KEY } from "../src/app/storage";
 import { parse } from "../src/lib/parser";
 import { DEFAULT_PREFERENCES } from "../src/lib/solver";
 import { handleRequest } from "../src/lib/solver/protocol";
@@ -14,6 +16,35 @@ function apply(state: AppState, ...actions: Action[]): AppState {
 }
 
 const addPaste = (raw: string): Action => ({ type: "addPaste", raw });
+const lock = (courseCode: string, groupId: string): Action => ({ type: "lock", courseCode, groupId });
+const unlock = (courseCode: string): Action => ({ type: "unlock", courseCode });
+const exclude = (key: string): Action => ({ type: "exclude", key });
+const unexclude = (key: string): Action => ({ type: "unexclude", key });
+const markFullAction = (key: string): Action => ({ type: "markFullAndRerun", key });
+const idOf = (key: string) => key.slice(key.indexOf(":") + 1);
+
+/** Both fixtures pasted, results shown (request id 1). */
+function withResults(): AppState {
+  return run(apply(initialState(), addPaste(CO2007), addPaste(CO2011)), 1);
+}
+
+/** Keys of the picks of the schedule at `index`, in course order (CO2007, CO2011). */
+function pickKeys(state: AppState, index = 0): string[] {
+  return state.result!.result.schedules[index].picks.map((p) => p.group.key);
+}
+
+/**
+ * Derived: the registration text of `raw` with one group's block removed (the
+ * group header line and its session lines), as if it disappeared on re-paste.
+ */
+function withoutGroup(raw: string, groupId: string): string {
+  const lines = raw.split(/\r?\n/);
+  const isGroupLine = (line: string) => /^[A-Z]+\d+(?:_[A-Z]+\d+)?\t\d+\/\d+\t/.test(line);
+  const start = lines.findIndex((line) => line.startsWith(`${groupId}\t`));
+  let end = start + 1;
+  while (end < lines.length && !isGroupLine(lines[end])) end++;
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n");
+}
 
 /** A real solver response for the current pastes, as the worker would send it. */
 function solved(state: AppState, id: number): Action {
@@ -113,11 +144,13 @@ describe("reducer: adding and removing courses", () => {
     expect(apply(state, { type: "resetPrefs" }).prefs.freeSeats.mode).toBe("preferred");
   });
 
-  it("keeps locked and excluded empty (Phase 5 features)", () => {
-    const prefs = { ...structuredClone(DEFAULT_PREFERENCES), locked: { CO2007: "A01_A01" }, excluded: ["CO2011:A01"] };
-    const state = apply(initialState(), { type: "setPrefs", prefs });
-    expect(state.prefs.locked).toEqual({});
-    expect(state.prefs.excluded).toEqual([]);
+  it("leaves locked and excluded groups to their own actions (setPrefs / resetPrefs keep them)", () => {
+    const locked = apply(initialState(), addPaste(CO2007), addPaste(CO2011), lock("CO2007", "A01_A01"), exclude("CO2011:A01"));
+    const prefs = { ...structuredClone(DEFAULT_PREFERENCES), locked: {}, excluded: [] };
+    for (const state of [apply(locked, { type: "setPrefs", prefs }), apply(locked, { type: "resetPrefs" })]) {
+      expect(state.prefs.locked).toEqual({ CO2007: "A01_A01" });
+      expect(state.prefs.excluded).toEqual(["CO2011:A01"]);
+    }
   });
 });
 
@@ -202,5 +235,218 @@ describe("step validation", () => {
   it("always allows going back", () => {
     const state = apply(initialState(), addPaste(CO2007), { type: "goTo", step: 3 });
     expect(apply(state, { type: "goTo", step: 1 }).step).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Locking and excluding groups (Phase 5)
+// ---------------------------------------------------------------------------
+
+describe("lock / unlock", () => {
+  it("locks one group per course and unlocks it", () => {
+    const base = apply(initialState(), addPaste(CO2007), addPaste(CO2011));
+    const locked = apply(base, lock("CO2007", "A01_A01"), lock("CO2011", "L01"));
+    expect(locked.prefs.locked).toEqual({ CO2007: "A01_A01", CO2011: "L01" });
+    expect(locked.version).toBe(base.version + 2);
+
+    const replaced = apply(locked, lock("CO2007", "L04_L08"));
+    expect(replaced.prefs.locked).toEqual({ CO2007: "L04_L08", CO2011: "L01" });
+    expect(apply(replaced, lock("CO2007", "L04_L08"))).toBe(replaced); // no change -> same state
+
+    const unlocked = apply(replaced, unlock("CO2007"));
+    expect(unlocked.prefs.locked).toEqual({ CO2011: "L01" });
+    expect(apply(unlocked, unlock("CO2007"))).toBe(unlocked);
+  });
+
+  it("ignores a lock on a group that is not pasted", () => {
+    const base = apply(initialState(), addPaste(CO2007));
+    expect(apply(base, lock("CO2011", "L01"))).toBe(base);
+    expect(apply(base, lock("CO2007", "L01"))).toBe(base); // CO2007 has L01_L01, not L01
+  });
+
+  it("re-runs automatically only on step 4; elsewhere the result just goes stale", () => {
+    const done = withResults();
+    expect(done.step).toBe(4);
+    const onResults = apply(done, lock("CO2011", "L03"));
+    expect(onResults.autoRun).toBe(true);
+    expect(isResultStale(onResults)).toBe(true);
+
+    const onPrefs = apply(done, { type: "goTo", step: 3 }, lock("CO2011", "L03"));
+    expect(onPrefs.autoRun).toBe(false);
+    expect(isResultStale(onPrefs)).toBe(true);
+
+    // A queued re-run is dropped when leaving step 4, cleared by the run itself, or cancelled.
+    expect(apply(onResults, { type: "goTo", step: 3 }).autoRun).toBe(false);
+    expect(apply(onResults, { type: "solveStart", id: 2 }).autoRun).toBe(false);
+    expect(apply(onResults, { type: "cancelAutoRun" }).autoRun).toBe(false);
+  });
+
+  it("goes back to the first schedule after a re-run, and every schedule keeps the lock", () => {
+    const done = apply(withResults(), { type: "selectSchedule", index: 2 });
+    expect(done.selected).toBe(2);
+    const co2011 = pickKeys(done, 2)[1];
+    const rerun = run(apply(done, lock("CO2011", idOf(co2011))), 2);
+    expect(rerun.selected).toBe(0);
+    expect(rerun.result!.result.schedules.length).toBeGreaterThan(0);
+    for (const schedule of rerun.result!.result.schedules) {
+      expect(schedule.picks.map((p) => p.group.key)).toContain(co2011);
+    }
+  });
+
+  it("clamps the selected schedule", () => {
+    const done = withResults();
+    expect(apply(done, { type: "selectSchedule", index: 99 }).selected).toBe(4);
+    expect(apply(done, { type: "selectSchedule", index: -3 }).selected).toBe(0);
+  });
+});
+
+describe("exclude / un-exclude", () => {
+  it("adds and removes excluded keys, once each", () => {
+    const base = apply(initialState(), addPaste(CO2007), addPaste(CO2011));
+    const excluded = apply(base, exclude("CO2007:CC02_CC03"), exclude("CO2011:CC05"), exclude("CO2007:CC02_CC03"));
+    expect(excluded.prefs.excluded).toEqual(["CO2007:CC02_CC03", "CO2011:CC05"]);
+    const back = apply(excluded, unexclude("CO2007:CC02_CC03"));
+    expect(back.prefs.excluded).toEqual(["CO2011:CC05"]);
+    expect(apply(back, unexclude("CO2007:CC02_CC03"))).toBe(back);
+  });
+
+  it("never keeps a group both locked and excluded", () => {
+    const base = apply(initialState(), addPaste(CO2007), lock("CO2007", "A01_A01"));
+    const excluded = apply(base, exclude("CO2007:A01_A01"));
+    expect(excluded.prefs).toMatchObject({ locked: {}, excluded: ["CO2007:A01_A01"] });
+    const relocked = apply(excluded, lock("CO2007", "A01_A01"));
+    expect(relocked.prefs).toMatchObject({ locked: { CO2007: "A01_A01" }, excluded: [] });
+  });
+
+  it("clears everything with Bỏ tất cả", () => {
+    const state = apply(initialState(), addPaste(CO2007), addPaste(CO2011), lock("CO2007", "A01_A01"), exclude("CO2011:L01"));
+    const cleared = apply(state, { type: "clearSelections" });
+    expect(cleared.prefs).toMatchObject({ locked: {}, excluded: [] });
+    expect(cleared.autoLocked).toEqual([]);
+  });
+});
+
+describe("markFullAndRerun", () => {
+  it("excludes the key and auto-locks every other pick of the SELECTED schedule", () => {
+    const done = apply(withResults(), { type: "selectSchedule", index: 1 });
+    const [co2007, co2011] = pickKeys(done, 1);
+    const marked = apply(done, markFullAction(co2007));
+    expect(marked.prefs.excluded).toEqual([co2007]);
+    expect(marked.prefs.locked).toEqual({ CO2011: idOf(co2011) });
+    expect(marked.autoLocked).toEqual([co2011]);
+    expect(marked.autoRun).toBe(true);
+
+    // The re-run: tab 1, the full group is gone, the other course is unchanged.
+    const rerun = run(marked, 2);
+    expect(rerun.selected).toBe(0);
+    for (const schedule of rerun.result!.result.schedules) {
+      const keys = schedule.picks.map((p) => p.group.key);
+      expect(keys).not.toContain(co2007);
+      expect(keys).toContain(co2011);
+    }
+  });
+
+  it("keeps a user lock as a user lock, and unlocks the full group if it was locked", () => {
+    const done = withResults();
+    const [co2007, co2011] = pickKeys(done);
+    const userLocked = apply(done, lock("CO2011", idOf(co2011)), lock("CO2007", idOf(co2007)));
+    const marked = apply(userLocked, markFullAction(co2007));
+    expect(marked.prefs.locked).toEqual({ CO2011: idOf(co2011) });
+    expect(marked.prefs.excluded).toEqual([co2007]);
+    expect(marked.autoLocked).toEqual([]);
+  });
+
+  it("undoing auto locks keeps user locks and excluded groups", () => {
+    const done = withResults();
+    const [co2007] = pickKeys(done);
+    // "Đã đầy" on CO2007 auto-locks CO2011; then the user locks a CO2007 group.
+    const state = apply(done, markFullAction(co2007), lock("CO2007", "L03_L06"));
+    expect(Object.keys(state.prefs.locked).sort()).toEqual(["CO2007", "CO2011"]);
+    expect(state.autoLocked).toHaveLength(1);
+
+    const undone = apply(state, { type: "undoAutoLocks" });
+    expect(undone.prefs.locked).toEqual({ CO2007: "L03_L06" });
+    expect(undone.prefs.excluded).toEqual([co2007]);
+    expect(undone.autoLocked).toEqual([]);
+  });
+
+  it("keeps marking full until no group fits, then retrying without the auto locks finds one", () => {
+    // Real data: with CO2011 kept on its group, CO2007 runs out of groups that fit around it.
+    let state = withResults();
+    let id = 1;
+    const kept = pickKeys(state)[1];
+    while (state.result!.result.status !== "infeasible") {
+      state = run(apply(state, markFullAction(pickKeys(state)[0])), ++id);
+      expect(id).toBeLessThan(30);
+    }
+    expect(state.prefs.locked).toEqual({ CO2011: idOf(kept) });
+    expect(state.autoLocked).toEqual([kept]);
+    const excluded = state.prefs.excluded;
+    expect(excluded.every((key) => key.startsWith("CO2007:"))).toBe(true);
+
+    const retried = run(apply(state, { type: "undoAutoLocks" }), ++id);
+    expect(retried.prefs.locked).toEqual({});
+    expect(retried.prefs.excluded).toEqual(excluded);
+    expect(retried.result!.result.status).toBe("ok");
+    const [co2007, co2011] = pickKeys(retried);
+    expect(excluded).not.toContain(co2007);
+    expect(co2011).not.toBe(kept); // every CO2007 group left clashes with the kept group
+  });
+
+  it("markFull / undoAutoLocks as pure functions", () => {
+    const picks = [
+      { courseCode: "CO2007", groupId: "A01_A01" },
+      { courseCode: "CO2011", groupId: "L02" },
+    ];
+    const userLock = markFull({ locked: { CO2007: "A01_A01" }, excluded: [], autoLocked: [] }, "CO2011:L02", picks);
+    expect(userLock).toEqual({ locked: { CO2007: "A01_A01" }, excluded: ["CO2011:L02"], autoLocked: [] });
+    const auto = markFull({ locked: {}, excluded: [], autoLocked: [] }, "CO2011:L02", picks);
+    expect(auto).toEqual({ locked: { CO2007: "A01_A01" }, excluded: ["CO2011:L02"], autoLocked: ["CO2007:A01_A01"] });
+    expect(undoAutoLocks(auto)).toEqual({ locked: {}, excluded: ["CO2011:L02"], autoLocked: [] });
+    // A pick that is itself excluded (stale result) is not locked.
+    const stale = markFull({ locked: {}, excluded: ["CO2007:A01_A01"], autoLocked: [] }, "CO2011:L02", picks);
+    expect(stale).toEqual({ locked: {}, excluded: ["CO2007:A01_A01", "CO2011:L02"], autoLocked: [] });
+  });
+});
+
+describe("pruning stale locks and excluded groups", () => {
+  const selections = (state: AppState) => ({ locked: state.prefs.locked, excluded: state.prefs.excluded, autoLocked: state.autoLocked });
+
+  it("drops a removed course's entries", () => {
+    const done = withResults();
+    const [co2007, co2011] = pickKeys(done);
+    let state = apply(done, markFullAction(co2007), exclude("CO2011:CC05"), lock("CO2007", "A01_A01"));
+    expect(selections(state)).toEqual({
+      locked: { CO2011: idOf(co2011), CO2007: "A01_A01" },
+      excluded: [co2007, "CO2011:CC05"],
+      autoLocked: [co2011],
+    });
+    state = apply(state, { type: "removeCourse", code: "CO2011" });
+    expect(selections(state)).toEqual({ locked: { CO2007: "A01_A01" }, excluded: [co2007], autoLocked: [] });
+  });
+
+  it("drops entries for a group that is gone after a re-paste, and keeps the rest", () => {
+    const repasted = withoutGroup(CO2007, "A01_A02");
+    const groups = parse(repasted).courses[0].groups.map((g) => g.id);
+    expect(groups).toHaveLength(17);
+    expect(groups).not.toContain("A01_A02");
+
+    const before = apply(initialState(), addPaste(CO2007), addPaste(CO2011), lock("CO2007", "A01_A02"), exclude("CO2007:A01_A01"), exclude("CO2007:L01_L01"));
+    expect(before.prefs.locked).toEqual({ CO2007: "A01_A02" });
+    const after = apply(before, addPaste(repasted));
+    expect(after.notice).toEqual({ added: [], replaced: ["CO2007"], empty: false });
+    expect(selections(after)).toEqual({ locked: {}, excluded: ["CO2007:A01_A01", "CO2007:L01_L01"], autoLocked: [] });
+  });
+
+  it("prunes what was saved when loading", () => {
+    const pastes = splitByCourse(`${CO2007}\n${CO2011}`);
+    const prefs = { ...defaultPrefs(), locked: { CO2007: "A01_A01", CO2011: "A01_A01", MT1003: "L01" }, excluded: ["CO2011:L01", "CO2011:L01", "CO2007:L01", "junk"] };
+    const autoLocked = ["CO2007:A01_A01", "CO2011:A01_A01", "CO2011:L02"];
+    const data = new Map([[STORAGE_KEY, JSON.stringify({ pastes, prefs, autoLocked })]]);
+    const loaded = loadSaved({ getItem: (key) => data.get(key) ?? null, setItem: () => {} });
+    expect(loaded.prefs.locked).toEqual({ CO2007: "A01_A01" });
+    expect(loaded.prefs.excluded).toEqual(["CO2011:L01"]);
+    expect(loaded.autoLocked).toEqual(["CO2007:A01_A01"]);
+    expect(initialState(loaded)).toMatchObject({ autoLocked: ["CO2007:A01_A01"], selected: 0, autoRun: false });
   });
 });

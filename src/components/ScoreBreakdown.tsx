@@ -1,10 +1,25 @@
-import { RELAX_WEIGHT, type Schedule } from "../lib/solver";
+import { RELAX_WEIGHT, type Schedule, type Violation } from "../lib/solver";
 import { itemLabel, percent } from "../lib/view/format";
+import { preferredViolations, relaxedViolations } from "../lib/view/summary";
+import { AlertIcon, InfoIcon } from "./ui";
 
-/** Item / metric / weight / penalty, then the violated constraints. */
-export function ScoreBreakdown({ schedule }: { schedule: Schedule }) {
+/**
+ * Broken relaxed requirements first (warning), then item / metric / weight /
+ * penalty, then the "Ưu tiên" items that were not met.
+ */
+export function ScoreBreakdown({ schedule, relaxed }: { schedule: Schedule; relaxed: string[] }) {
+  const broken = relaxedViolations(schedule, relaxed);
+  const missed = preferredViolations(schedule, relaxed);
   return (
     <div className="space-y-3">
+      {broken.length > 0 && (
+        <ViolationBox
+          tone="peach"
+          title="Vi phạm yêu cầu bắt buộc (đã nới)"
+          note="Không có lịch nào đáp ứng hết nên các yêu cầu này đã được nới. Các môn sau không đạt:"
+          violations={broken}
+        />
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Chi tiết điểm phạt</caption>
@@ -39,18 +54,28 @@ export function ScoreBreakdown({ schedule }: { schedule: Schedule }) {
           </tfoot>
         </table>
       </div>
-      {schedule.violations.length > 0 && (
-        <div className="rounded-xl bg-ctp-red/10 p-3 text-sm">
-          <p className="font-semibold text-ctp-red">Vi phạm</p>
-          <ul className="mt-1 space-y-0.5">
-            {schedule.violations.map((v) => (
-              <li key={v.item}>
-                {itemLabel(v.item)}: {v.courses.join(", ")}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {missed.length > 0 && <ViolationBox tone="blue" title="Chưa đạt ưu tiên" violations={missed} />}
+    </div>
+  );
+}
+
+function ViolationBox({ tone, title, note, violations }: { tone: "peach" | "blue"; title: string; note?: string; violations: Violation[] }) {
+  const look = tone === "peach" ? "border-ctp-peach/40 bg-ctp-peach/10 text-ctp-peach" : "border-ctp-blue/40 bg-ctp-blue/10 text-ctp-blue";
+  const Icon = tone === "peach" ? AlertIcon : InfoIcon;
+  return (
+    <div className={`rounded-xl border p-3 text-sm ${look}`}>
+      <p className="flex items-center gap-2 font-semibold">
+        <Icon className="size-4 shrink-0" />
+        {title}
+      </p>
+      {note && <p className="mt-1 text-ctp-text">{note}</p>}
+      <ul className="mt-1 space-y-0.5 text-ctp-text">
+        {violations.map((v) => (
+          <li key={v.item}>
+            <span className="font-semibold">{itemLabel(v.item)}</span>: {v.courses.join(", ")}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

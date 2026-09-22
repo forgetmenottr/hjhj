@@ -1,63 +1,95 @@
 import { useId, useRef, useState, type KeyboardEvent } from "react";
 import type { SolveOutcome } from "../app/state";
 import type { Schedule } from "../lib/solver";
-import { groupIdOf, isFull } from "../lib/view/format";
-import { toGridBlocks } from "../lib/view/grid";
-import { courseColor } from "./courseColor";
+import { blocksForWeek, toGridBlocks, weeksWithClasses, type GridBlock, type WeekFilter } from "../lib/view/grid";
+import { relaxedViolations, scheduleLabel } from "../lib/view/summary";
 import { DayList } from "./DayList";
+import { PickList, type PickActions } from "./PickList";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 import { TimetableGrid } from "./TimetableGrid";
-import { AlertIcon, Badge, Card } from "./ui";
+import { AlertIcon, Card, InfoIcon } from "./ui";
+import { WeekSelector } from "./WeekSelector";
+
+interface Props extends PickActions {
+  outcome: SolveOutcome;
+  /** Selected schedule (lives in the reducer so a re-run can reset it to the first one). */
+  selected: number;
+  onSelect: (index: number) => void;
+  courseNames: Record<string, string>;
+  locked: Record<string, string>;
+  autoLocked: string[];
+}
 
 /**
- * "Lịch 1 · 87 điểm" … tabs and the selected schedule. Remount (via `key`)
- * for a new result so the selection starts at the first schedule.
+ * "Lịch 1 · 87 điểm" … tabs and the selected schedule. A schedule that breaks
+ * relaxed requirements is labelled "Lịch N · ⚠ K yêu cầu" instead of its score.
  */
-export function ResultTabs({ outcome, courseNames }: { outcome: SolveOutcome; courseNames: Record<string, string> }) {
-  const { schedules, stats } = outcome.result;
-  const [selected, setSelected] = useState(0);
+export function ResultTabs({ outcome, selected, onSelect, courseNames, locked, autoLocked, onToggleLock, onMarkFull }: Props) {
+  const { schedules, stats, relaxed } = outcome.result;
+  const [week, setWeek] = useState<WeekFilter>("all");
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const baseId = useId();
   if (schedules.length === 0) return null;
-  const current = schedules[Math.min(selected, schedules.length - 1)];
+  const index = Math.min(selected, schedules.length - 1);
+  const current = schedules[index];
 
   // Arrow keys move between tabs (WAI-ARIA tabs pattern).
   const onKeyDown = (e: KeyboardEvent) => {
     const delta = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
     if (delta === 0) return;
     e.preventDefault();
-    const next = (selected + delta + schedules.length) % schedules.length;
-    setSelected(next);
+    const next = (index + delta + schedules.length) % schedules.length;
+    onSelect(next);
     tabs.current[next]?.focus();
   };
 
   return (
     <div className="space-y-4">
       <div role="tablist" aria-label="Các lịch tìm được" onKeyDown={onKeyDown} className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0">
-        {schedules.map((s, i) => (
-          <button
-            key={i}
-            ref={(el) => {
-              tabs.current[i] = el;
-            }}
-            id={`${baseId}-tab-${i}`}
-            type="button"
-            role="tab"
-            aria-selected={i === selected}
-            aria-controls={`${baseId}-panel`}
-            tabIndex={i === selected ? 0 : -1}
-            onClick={() => setSelected(i)}
-            className={`min-h-11 shrink-0 rounded-xl px-4 text-sm font-semibold whitespace-nowrap transition-colors ${
-              i === selected ? "bg-ctp-mauve text-ctp-crust" : "bg-ctp-surface0 text-ctp-text hover:bg-ctp-surface1"
-            }`}
-          >
-            Lịch {i + 1} · {s.score} điểm
-          </button>
-        ))}
+        {schedules.map((s, i) => {
+          const warn = relaxedViolations(s, relaxed).length > 0;
+          const active = i === index;
+          return (
+            <button
+              key={i}
+              ref={(el) => {
+                tabs.current[i] = el;
+              }}
+              id={`${baseId}-tab-${i}`}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`${baseId}-panel`}
+              tabIndex={active ? 0 : -1}
+              onClick={() => onSelect(i)}
+              className={`min-h-11 shrink-0 rounded-xl px-4 text-sm font-semibold whitespace-nowrap transition-colors ${
+                active
+                  ? warn
+                    ? "bg-ctp-peach text-ctp-crust"
+                    : "bg-ctp-mauve text-ctp-crust"
+                  : warn
+                    ? "bg-ctp-surface0 text-ctp-peach hover:bg-ctp-surface1"
+                    : "bg-ctp-surface0 text-ctp-text hover:bg-ctp-surface1"
+              }`}
+            >
+              {scheduleLabel(s, i, relaxed)}
+            </button>
+          );
+        })}
       </div>
 
-      <div role="tabpanel" id={`${baseId}-panel`} aria-labelledby={`${baseId}-tab-${selected}`} className="space-y-4">
-        <ScheduleView schedule={current} courseNames={courseNames} />
+      <div role="tabpanel" id={`${baseId}-panel`} aria-labelledby={`${baseId}-tab-${index}`} className="space-y-4">
+        <ScheduleView
+          schedule={current}
+          relaxed={relaxed}
+          week={week}
+          onWeek={setWeek}
+          courseNames={courseNames}
+          locked={locked}
+          autoLocked={autoLocked}
+          onToggleLock={onToggleLock}
+          onMarkFull={onMarkFull}
+        />
         <p className="text-xs text-ctp-subtext">
           Đã duyệt {stats.nodes.toLocaleString("vi-VN")} nút · bộ giải {Math.round(stats.ms)} ms · tổng {Math.round(outcome.elapsedMs)} ms
         </p>
@@ -72,57 +104,81 @@ export function ResultTabs({ outcome, courseNames }: { outcome: SolveOutcome; co
   );
 }
 
-function ScheduleView({ schedule, courseNames }: { schedule: Schedule; courseNames: Record<string, string> }) {
+function ScheduleView({
+  schedule,
+  relaxed,
+  week,
+  onWeek,
+  courseNames,
+  locked,
+  autoLocked,
+  onToggleLock,
+  onMarkFull,
+}: PickActions & {
+  schedule: Schedule;
+  relaxed: string[];
+  week: WeekFilter;
+  onWeek: (week: WeekFilter) => void;
+  courseNames: Record<string, string>;
+  locked: Record<string, string>;
+  autoLocked: string[];
+}) {
   const blocks = toGridBlocks(schedule);
+  const shown = blocksForWeek(blocks, week);
+  const isLocked = (b: GridBlock) => locked[b.courseCode] === b.groupId;
+  const broken = relaxedViolations(schedule, relaxed);
+
   return (
     <>
-      <Card>
-        <h3 className="font-semibold">Nhóm đã chọn</h3>
-        <ul className="mt-3 space-y-3">
-          {schedule.picks.map((pick, i) => {
-            const group = pick.group.group;
-            return (
-              <li key={pick.courseCode} className="flex gap-3" style={courseColor(i)}>
-                <span className="course-dot mt-1.5 size-3 shrink-0 rounded-full" aria-hidden="true" />
-                <div className="min-w-0 text-sm">
-                  <p className="truncate">
-                    <span className="font-semibold">{pick.courseCode}</span>
-                    <span className="text-ctp-subtext"> · {courseNames[pick.courseCode] ?? ""}</span>
-                  </p>
-                  <p className="mt-0.5 flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-base font-bold">{group.id}</span>
-                    <span className="text-ctp-subtext">
-                      {group.registered}/{group.capacity}
-                    </span>
-                    {isFull(group) && <Badge tone="red">Đầy</Badge>}
-                    <Badge tone={group.language === "TA" ? "blue" : "neutral"}>{group.language}</Badge>
-                  </p>
-                  {pick.alternatives.length > 0 && (
-                    <p className="mt-0.5 text-ctp-subtext">hoặc {pick.alternatives.map(groupIdOf).join(", ")}</p>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
+      <PickList
+        schedule={schedule}
+        relaxed={relaxed}
+        courseNames={courseNames}
+        locked={locked}
+        autoLocked={autoLocked}
+        onToggleLock={onToggleLock}
+        onMarkFull={onMarkFull}
+      />
 
-      <section aria-label="Thời khoá biểu">
-        <p className="mb-2 text-xs text-ctp-subtext">Gộp tất cả các tuần; buổi thí nghiệm (TN) ghi rõ tuần học.</p>
-        <div className="hidden md:block">
-          <TimetableGrid blocks={blocks} />
+      <section aria-label="Thời khoá biểu" className="space-y-2">
+        <WeekSelector weeks={weeksWithClasses(blocks)} value={week} onChange={onWeek} />
+        <div aria-live="polite">
+          {shown.length === 0 ? (
+            <p className="flex items-center gap-2 rounded-2xl border border-dashed border-ctp-surface1 p-6 text-sm text-ctp-subtext">
+              <InfoIcon className="size-5 shrink-0" />
+              Tuần này không có lớp
+            </p>
+          ) : (
+            <p className="text-xs text-ctp-subtext">
+              {week === "all" ? "Gộp tất cả các tuần; buổi thí nghiệm (TN) ghi rõ tuần học." : `Tuần ${week}: chỉ hiện các buổi có học trong tuần này.`}
+            </p>
+          )}
         </div>
-        <div className="md:hidden">
-          <DayList blocks={blocks} />
-        </div>
+        {shown.length > 0 && (
+          <>
+            <div className="hidden md:block">
+              {/* The grid keeps the all-weeks frame so days and rows do not jump between weeks. */}
+              <TimetableGrid blocks={shown} frame={blocks} isLocked={isLocked} />
+            </div>
+            <div className="md:hidden">
+              <DayList blocks={shown} isLocked={isLocked} />
+            </div>
+          </>
+        )}
       </section>
 
       <Card>
         <h3 className="font-semibold">
           Điểm: {schedule.score}/100 <span className="text-sm font-normal text-ctp-subtext">(càng ít điểm phạt càng tốt)</span>
         </h3>
+        {broken.length > 0 && (
+          <p className="mt-1 flex gap-2 text-sm text-ctp-peach">
+            <AlertIcon className="size-5 shrink-0" />
+            Điểm chưa tính các yêu cầu bị nới: lịch này vi phạm {broken.length} yêu cầu bắt buộc (xem bên dưới).
+          </p>
+        )}
         <div className="mt-2">
-          <ScoreBreakdown schedule={schedule} />
+          <ScoreBreakdown schedule={schedule} relaxed={relaxed} />
         </div>
       </Card>
     </>

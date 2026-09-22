@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import type { SolveOutcome, SolverStatus } from "../app/state";
 import { itemLabel } from "../lib/view/format";
 import { AlertIcon, Button, CheckIcon, InfoIcon, RefreshIcon, Spinner } from "./ui";
@@ -42,21 +42,32 @@ function Diagnostics({ lines }: { lines: string[] }) {
   );
 }
 
-/** Running / error / ok / relaxed / infeasible, plus a "stale" notice. Announced politely. */
+/**
+ * Running / error / ok / relaxed / infeasible, plus a "stale" notice. Announced
+ * politely; focusable (tabIndex -1) so focus can land here when the control
+ * that started a re-run disappears.
+ */
 export function StatusBanner({
+  ref,
   status,
   outcome,
   error,
   stale,
+  hasAutoLocks,
   onCancel,
   onRerun,
+  onUndoAutoLocks,
 }: {
+  ref?: Ref<HTMLDivElement>;
   status: SolverStatus;
   outcome: SolveOutcome | null;
   error: string | null;
   stale: boolean;
+  /** Some locks were added by "Đã đầy"; an infeasible result then offers to drop them. */
+  hasAutoLocks: boolean;
   onCancel: () => void;
   onRerun: () => void;
+  onUndoAutoLocks: () => void;
 }) {
   const result = outcome?.result;
   let main: ReactNode = null;
@@ -89,15 +100,25 @@ export function StatusBanner({
       <Banner tone="peach" icon={<AlertIcon className="size-5 text-ctp-peach" />} title="Không thể đáp ứng mọi yêu cầu bắt buộc cùng lúc.">
         <p>
           Các yêu cầu sau đã tạm chuyển thành ưu tiên (bị trừ điểm rất nặng nếu vi phạm):{" "}
-          <strong>{result.relaxed.map(itemLabel).join(", ")}</strong>. Xem mục “Vi phạm” của từng lịch.
+          <strong>{result.relaxed.map(itemLabel).join(", ")}</strong>. Lịch vi phạm có dấu ⚠ trên thẻ lịch; chi tiết ở phần điểm.
         </p>
+        <Diagnostics lines={result.diagnostics} />
+      </Banner>
+    );
+  } else if (result?.status === "infeasible" && hasAutoLocks) {
+    main = (
+      <Banner tone="red" icon={<AlertIcon className="size-5 text-ctp-red" />} title="Không tìm được nhóm thay thế khi giữ nguyên các môn khác">
+        <p>Các môn còn lại đang được giữ nguyên nhóm (khoá tự động khi bạn bấm “Đã đầy”), và không còn nhóm nào khác của môn này xếp vừa.</p>
+        <Button variant="primary" onClick={onUndoAutoLocks}>
+          <RefreshIcon className="size-4" /> Thử lại, không giữ các môn khác
+        </Button>
         <Diagnostics lines={result.diagnostics} />
       </Banner>
     );
   } else if (result?.status === "infeasible") {
     main = (
       <Banner tone="red" icon={<AlertIcon className="size-5 text-ctp-red" />} title="Không có lịch nào phù hợp.">
-        <p>Mọi cách chọn nhóm đều bị trùng giờ hoặc bị loại. Hãy bớt yêu cầu hoặc đổi môn.</p>
+        <p>Mọi cách chọn nhóm đều bị trùng giờ hoặc bị loại. Hãy bỏ bớt nhóm đã khoá / đã loại, bớt yêu cầu hoặc đổi môn.</p>
         <Diagnostics lines={result.diagnostics} />
       </Banner>
     );
@@ -110,7 +131,7 @@ export function StatusBanner({
   }
 
   return (
-    <div role="status" aria-live="polite" className="space-y-3">
+    <div ref={ref} tabIndex={-1} role="status" aria-live="polite" className="space-y-3 focus:outline-none">
       {main}
       {stale && status !== "running" && (
         <Banner tone="yellow" icon={<InfoIcon className="size-5 text-ctp-yellow" />} title="Kết quả đã cũ — chạy lại">

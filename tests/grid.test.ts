@@ -3,7 +3,7 @@ import { parse } from "../src/lib/parser";
 import type { Schedule } from "../src/lib/solver";
 import { buildMasks, type IndexedGroup } from "../src/lib/timing";
 import { contiguousRuns, formatRanges, formatSession, groupIdOf, isFull } from "../src/lib/view/format";
-import { assignLanes, describeBlock, periodRange, toGridBlocks, usedDays } from "../src/lib/view/grid";
+import { assignLanes, blocksForWeek, describeBlock, periodRange, toGridBlocks, usedDays, weeksWithClasses } from "../src/lib/view/grid";
 import { readFixture } from "./fixtureText";
 
 const COURSES = buildMasks([...parse(readFixture("CO2007.txt")).courses, ...parse(readFixture("CO2011.txt")).courses]).courses;
@@ -63,6 +63,29 @@ describe("toGridBlocks", () => {
   it("describes a block for tooltips", () => {
     const [, lab] = toGridBlocks(scheduleOf([byKey("CO2007:A01_A01")]));
     expect(describeBlock(lab)).toBe("CO2007 A01_A01 · Thứ 2 tiết 8–12 · C5-202 · CS1 · thí nghiệm tuần 6,10,12,14");
+    expect(describeBlock(lab, true)).toBe("CO2007 A01_A01 · Thứ 2 tiết 8–12 · C5-202 · CS1 · thí nghiệm tuần 6,10,12,14 · đã khoá");
+  });
+});
+
+describe("week selector helpers", () => {
+  const blocks = toGridBlocks(scheduleOf([byKey("CO2007:A01_A01")]));
+  const summary = (list: typeof blocks) => list.map((b) => `${b.kind} T${b.day} ${b.startPeriod}-${b.endPeriod}`);
+
+  it("blocksForWeek: CO2007:A01_A01 has its Monday lab in week 6 but not in week 7, and nothing in week 8", () => {
+    expect(summary(blocksForWeek(blocks, 6))).toEqual(["theory T2 2-4", "lab T2 8-12"]);
+    expect(summary(blocksForWeek(blocks, 7))).toEqual(["theory T2 2-4"]);
+    expect(blocksForWeek(blocks, 8)).toEqual([]); // the mid-term break
+    expect(blocksForWeek(blocks, 17)).toEqual([]);
+    expect(blocksForWeek(blocks, "all")).toBe(blocks);
+  });
+
+  it("weeksWithClasses lists the weeks of every block, ascending", () => {
+    expect(weeksWithClasses(blocks)).toEqual(THEORY_WEEKS);
+    expect(weeksWithClasses(blocks.filter((b) => b.kind === "lab"))).toEqual([6, 10, 12, 14]);
+    // CC01_CC01's lab is on the other weeks: 7, 9, 11, 13.
+    const labs = toGridBlocks(scheduleOf([byKey("CO2007:A01_A01"), byKey("CO2007:CC01_CC01")])).filter((b) => b.kind === "lab");
+    expect(weeksWithClasses(labs)).toEqual([6, 7, 9, 10, 11, 12, 13, 14]);
+    expect(weeksWithClasses([])).toEqual([]);
   });
 });
 

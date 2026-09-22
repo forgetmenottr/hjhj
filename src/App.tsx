@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import { parsePaste, splitByCourse } from "./app/pastes";
-import { canGoTo, initialState, isResultStale, reducer, type Step } from "./app/state";
+import { AUTO_RERUN_DELAY_MS, canGoTo, initialState, isResultStale, reducer, type Step } from "./app/state";
 import { loadSaved, saveState } from "./app/storage";
 import { useSolver } from "./app/useSolver";
 import { CoursePreview } from "./components/CoursePreview";
 import { PasteInput } from "./components/PasteInput";
 import { PreferencesForm } from "./components/PreferencesForm";
 import { ResultTabs } from "./components/ResultTabs";
+import { SelectionsCard } from "./components/SelectionsCard";
 import { StatusBanner } from "./components/StatusBanner";
 import { Stepper } from "./components/Stepper";
 import { Button } from "./components/ui";
@@ -14,19 +15,30 @@ import { STEP_LABELS } from "./lib/view/format";
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, () => initialState(loadSaved()));
-  const solver = useSolver(dispatch);
-  const { step, pastes, prefs } = state;
+  const { run, cancel } = useSolver(dispatch);
+  const { step, pastes, prefs, autoLocked, autoRun } = state;
 
   // Raw text is the source of truth; parse it whenever it changes.
   const parsed = useMemo(() => pastes.map(parsePaste), [pastes]);
   const courses = useMemo(() => parsed.flatMap((p) => (p.course && p.course.groups.length > 0 ? [p.course] : [])), [parsed]);
-  const courseNames = useMemo(() => Object.fromEntries(courses.map((c) => [c.code, c.name])), [courses]);
+  const courseNames = useMemo(() => Object.fromEntries(parsed.flatMap((p) => (p.course ? [[p.code, p.course.name]] : []))), [parsed]);
   const hasCourses = courses.length > 0;
 
-  // Persist only the raw pastes and the preferences.
+  // Persist only the raw pastes, the preferences (with locks) and the auto-lock marks.
   useEffect(() => {
-    saveState({ pastes, prefs });
-  }, [pastes, prefs]);
+    saveState({ pastes, prefs, autoLocked });
+  }, [pastes, prefs, autoLocked]);
+
+  // Lock / exclude changes on step 4: stop the run in progress, then re-run
+  // once the clicks settle (each change restarts the delay).
+  useEffect(() => {
+    if (autoRun && state.solverStatus === "running") cancel();
+  }, [autoRun, state.solverStatus, cancel]);
+  useEffect(() => {
+    if (!autoRun) return;
+    const timer = setTimeout(() => run(courses, prefs), AUTO_RERUN_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [autoRun, courses, prefs, run]);
 
   // Move focus to the step heading on step change (not on first render).
   const heading = useRef<HTMLHeadingElement>(null);
@@ -36,14 +48,38 @@ export default function App() {
     else heading.current?.focus();
   }, [step]);
 
+  // A re-run can remove the button that started it (e.g. nothing fits any
+  // more); focus then falls to <body>, so bring it to the status instead.
+  const status = useRef<HTMLDivElement>(null);
+  const resultId = state.result?.id;
+  useEffect(() => {
+    if (resultId !== undefined && (document.activeElement === null || document.activeElement === document.body)) status.current?.focus();
+  }, [resultId]);
+
   // Results need room for the weekly grid; the other steps read better narrow.
   const width = step === 4 ? "max-w-6xl" : "max-w-3xl";
   const goTo = (target: Step) => dispatch({ type: "goTo", step: target });
-  const runSolver = () => solver.run(courses, prefs);
+  const runSolver = () => run(courses, prefs);
   const addPaste = (raw: string) => {
     dispatch({ type: "addPaste", raw });
     return splitByCourse(raw).length > 0;
   };
+  const toggleLock = (courseCode: string, groupId: string, lock: boolean) =>
+    dispatch(lock ? { type: "lock", courseCode, groupId } : { type: "unlock", courseCode });
+  const busy = state.solverStatus === "running" || autoRun;
+  const selections = (
+    <SelectionsCard
+      locked={prefs.locked}
+      excluded={prefs.excluded}
+      autoLocked={autoLocked}
+      courseNames={courseNames}
+      onUnlock={(courseCode) => dispatch({ type: "unlock", courseCode })}
+      onUnexclude={(key) => dispatch({ type: "unexclude", key })}
+      onClear={() => dispatch({ type: "clearSelections" })}
+    />
+  );
+  const infeasible = state.result?.result.status === "infeasible";
+  const hasSelections = Object.keys(prefs.locked).length + prefs.excluded.length > 0;
 
   return (
     <div className="min-h-dvh pb-28">
@@ -66,22 +102,43 @@ export default function App() {
         {step === 1 && (
           <PasteInput courses={parsed} notice={state.notice} onAdd={addPaste} onRemove={(code) => dispatch({ type: "removeCourse", code })} />
         )}
-        {step === 2 && <CoursePreview courses={parsed} />}
+        {step === 2 && <CoursePreview courses={parsed} locked={prefs.locked} excluded={prefs.excluded} onToggleLock={toggleLock} />}
         {step === 3 && (
-          <PreferencesForm prefs={prefs} onChange={(next) => dispatch({ type: "setPrefs", prefs: next })} onReset={() => dispatch({ type: "resetPrefs" })} />
+          <div className="space-y-4">
+            {selections}
+            <PreferencesForm prefs={prefs} onChange={(next) => dispatch({ type: "setPrefs", prefs: next })} onReset={() => dispatch({ type: "resetPrefs" })} />
+          </div>
         )}
         {step === 4 && (
           <div className="space-y-4">
             <StatusBanner
-              status={state.solverStatus}
+              ref={status}
+              status={busy ? "running" : state.solverStatus}
               outcome={state.result}
               error={state.error}
               stale={isResultStale(state)}
-              onCancel={solver.cancel}
+              hasAutoLocks={autoLocked.length > 0}
+              onCancel={() => {
+                dispatch({ type: "cancelAutoRun" });
+                cancel();
+              }}
               onRerun={runSolver}
+              onUndoAutoLocks={() => dispatch({ type: "undoAutoLocks" })}
             />
-            {state.result && state.solverStatus !== "running" && (
-              <ResultTabs key={state.result.id} outcome={state.result} courseNames={courseNames} />
+            {infeasible && !busy && hasSelections && selections}
+            {state.result && (
+              <div aria-busy={busy} className={`transition-opacity ${busy ? "opacity-60" : ""}`}>
+                <ResultTabs
+                  outcome={state.result}
+                  selected={state.selected}
+                  onSelect={(index) => dispatch({ type: "selectSchedule", index })}
+                  courseNames={courseNames}
+                  locked={prefs.locked}
+                  autoLocked={autoLocked}
+                  onToggleLock={toggleLock}
+                  onMarkFull={(key) => dispatch({ type: "markFullAndRerun", key })}
+                />
+              </div>
             )}
           </div>
         )}

@@ -30,6 +30,7 @@ Out of scope:
 ## 4. User flow
 1. Paste: user pastes 5–6 courses (one at a time or all at once).
 2. Preview: parsed courses/groups/sessions are shown; parse warnings are highlighted; user can delete or re-paste a course.
+   Pasted text is split into one block per course (from its summary lines to the next course) and each block is stored and parsed on its own, so parse-warning line numbers are relative to that course's block, not to the whole paste.
 3. Preferences: user sets requirements, marks each as Required or Preferred, adjusts weights. Saved to localStorage.
 4. Results: top-5 timetables as weekly grids with a week selector, score breakdown, and violated requirements. User can lock a group and re-run.
 5. Register: a checklist of group ids per course (e.g. "CO2007 → L01_L02") with a copy button. "This group is full" button excludes that group, keeps the other locked choices, and re-runs.
@@ -39,8 +40,9 @@ Out of scope:
 raw text ─ parse() ─► Course[] + warnings            src/lib/parser/   (Phase 1)
          ─ buildMasks() ─► groups with time bitmasks src/lib/timing/   (Phase 2)
          ─ solve(courses, prefs) ─► Schedule[]       src/lib/solver/   (Phase 3, pure; Web Worker wrapper in Phase 4)
-         ─ UI                                        src/components/, src/pages/ (Phase 4–6)
+         ─ UI                                        src/app/, src/components/, src/lib/view/ (Phase 4–6)
 ```
+UI state (Phase 4): one reducer in `src/app/state.ts` holds pastes, prefs, the current step, the solver status and the last result. `useSolver(dispatch)` (`src/app/useSolver.ts`) returns only `{ run, cancel }`; it posts requests to the worker and reports progress, results and errors by dispatching actions, and the reducer drops responses whose request id is stale. localStorage (`tkb:v1`) keeps only the raw pastes and the preferences, never results.
 Every lib module is a pure function with no DOM or React dependency, and is unit-tested.
 
 ## 6. Data model (parser output)
@@ -64,6 +66,7 @@ User-selectable Required/Preferred:
 - Allowed campus(es); days off; language (V/TA); only groups with free seats; include/exclude lecturer; lock a specific group; exclude a specific group.
 Soft only (weighted score):
 - Prefer afternoon (or morning) periods; fewer days on campus; compact days (few idle periods between classes); no campus switch within one day; avoid periods 1–2.
+App defaults (Phase 4): the solver's `DEFAULT_PREFERENCES` (every constraint off) are unchanged; the app starts from them with `freeSeats` set to "preferred", so the first suggestions avoid groups that are already full.
 Relaxation: if any course has zero valid groups or the search finds zero schedules, convert user "Required" items into soft penalties with a very large weight, re-run, and report every relaxed/violated item.
 Equivalent-group collapsing: within a course, groups with identical time masks AND identical per-session campus AND the same language, free-seats status and lecturer-avoid status score identically in every schedule. The solver searches one representative per class (lexicographically smallest id) and lists the other group keys as alternatives of the pick, so the user can register any of them.
 
@@ -83,9 +86,11 @@ Vite + React + TypeScript, Tailwind CSS, Vitest, Web Worker, localStorage. Deplo
 src/lib/parser/     types.ts, parse.ts, index.ts, README.md
 src/lib/timing/     constants.ts, mask.ts, build.ts, conflicts.ts, index.ts, README.md
 src/lib/solver/     types.ts, constants.ts, filter.ts, equivalence.ts, score.ts, search.ts, solve.ts, index.ts, README.md
-                    (worker.ts: Phase 4)
-src/components/     PasteInput, CoursePreview, PreferencesForm, TimetableGrid, ResultTabs, Checklist
-src/pages/          App flow (Paste → Preview → Preferences → Results)
+                    (protocol.ts, worker.ts: Phase 4)
+src/lib/view/       pure display helpers (grid blocks, labels)
+src/app/            reducer state, storage, paste splitting, useSolver hook
+src/components/     PasteInput, CoursePreview, PreferencesForm, TimetableGrid, ResultTabs, Checklist, ...
+src/App.tsx         App flow (Paste → Preview → Preferences → Results)
 tests/              *.test.ts
 tests/fixtures/     real text copied from the registration page (never hand-typed or invented)
 ```

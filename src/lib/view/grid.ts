@@ -54,6 +54,19 @@ export function toGridBlocks(schedule: Schedule): GridBlock[] {
   return blocks.sort(compareBlocks);
 }
 
+/** A week number (1-based) or the union of all weeks. */
+export type WeekFilter = number | "all";
+
+/** Blocks that have a class in `week`; "all" keeps every block (the union view). */
+export function blocksForWeek(blocks: GridBlock[], week: WeekFilter): GridBlock[] {
+  return week === "all" ? blocks : blocks.filter((b) => b.weeks.includes(week));
+}
+
+/** Weeks in which at least one block has a class, ascending. */
+export function weeksWithClasses(blocks: GridBlock[]): number[] {
+  return [...new Set(blocks.flatMap((b) => b.weeks))].sort((a, b) => a - b);
+}
+
 /** First and last period used by any block, or null when there are none. */
 export function periodRange(blocks: GridBlock[]): { first: number; last: number } | null {
   if (blocks.length === 0) return null;
@@ -111,7 +124,8 @@ export function assignLanes(dayBlocks: GridBlock[]): PlacedBlock[] {
 }
 
 /** Full description of a block, for tooltips and screen readers. */
-export function describeBlock(b: GridBlock): string {
+export function describeBlock(b: GridBlock, locked = false): string {
   const weeks = b.kind === "lab" ? ` · thí nghiệm tuần ${formatWeekList(b.weeks)}` : ` · tuần ${formatRanges(b.weeks)}`;
-  return `${b.courseCode} ${b.groupId} · ${DAY_LONG[b.day]} tiết ${b.startPeriod}–${b.endPeriod} · ${b.room} · ${campusLabel(b.campus)}${weeks}`;
+  const lock = locked ? " · đã khoá" : "";
+  return `${b.courseCode} ${b.groupId} · ${DAY_LONG[b.day]} tiết ${b.startPeriod}–${b.endPeriod} · ${b.room} · ${campusLabel(b.campus)}${weeks}${lock}`;
 }

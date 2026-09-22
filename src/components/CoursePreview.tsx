@@ -3,23 +3,59 @@ import type { ParsedPaste } from "../app/pastes";
 import type { Group } from "../lib/parser";
 import { formatSession, isFull } from "../lib/view/format";
 import { courseColor } from "./courseColor";
-import { AlertIcon, Badge, ChevronIcon } from "./ui";
+import { AlertIcon, Badge, BanIcon, ChevronIcon, LockIcon, ToggleButton, UnlockIcon } from "./ui";
+
+/** Lock (true) or unlock (false) a group. */
+type ToggleLock = (courseCode: string, groupId: string, lock: boolean) => void;
 
 /** Step 2: one collapsible card per course with its groups and parse warnings. */
-export function CoursePreview({ courses }: { courses: ParsedPaste[] }) {
+export function CoursePreview({
+  courses,
+  locked,
+  excluded,
+  onToggleLock,
+}: {
+  courses: ParsedPaste[];
+  locked: Record<string, string>;
+  excluded: string[];
+  onToggleLock: ToggleLock;
+}) {
   return (
     <div className="space-y-3">
       <p className="text-sm text-ctp-subtext">
-        Kiểm tra lại dữ liệu đã đọc được. Mở từng môn để xem nhóm lớp và lịch học.
+        Kiểm tra lại dữ liệu đã đọc được. Mở từng môn để xem nhóm lớp và lịch học. Nếu đã biết sẽ học nhóm nào, bấm “Chọn nhóm này” để
+        khoá nhóm đó khi xếp lịch.
       </p>
       {courses.map((paste, index) => (
-        <CourseCard key={paste.code} paste={paste} colorIndex={index} defaultOpen={index === 0} />
+        <CourseCard
+          key={paste.code}
+          paste={paste}
+          colorIndex={index}
+          defaultOpen={index === 0}
+          lockedId={locked[paste.code]}
+          excluded={excluded}
+          onToggleLock={onToggleLock}
+        />
       ))}
     </div>
   );
 }
 
-function CourseCard({ paste, colorIndex, defaultOpen }: { paste: ParsedPaste; colorIndex: number; defaultOpen: boolean }) {
+function CourseCard({
+  paste,
+  colorIndex,
+  defaultOpen,
+  lockedId,
+  excluded,
+  onToggleLock,
+}: {
+  paste: ParsedPaste;
+  colorIndex: number;
+  defaultOpen: boolean;
+  lockedId: string | undefined;
+  excluded: string[];
+  onToggleLock: ToggleLock;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const bodyId = useId();
   const course = paste.course;
@@ -44,6 +80,12 @@ function CourseCard({ paste, colorIndex, defaultOpen }: { paste: ParsedPaste; co
               {course?.credits != null && <Badge>{course.credits} tín chỉ</Badge>}
               <Badge tone={groups.length > 0 ? "neutral" : "red"}>{groups.length} nhóm</Badge>
               {paste.warnings.length > 0 && <Badge tone="yellow">{paste.warnings.length} cảnh báo</Badge>}
+              {lockedId !== undefined && (
+                <Badge tone="mauve">
+                  <LockIcon className="size-3.5" />
+                  Đã khoá {lockedId}
+                </Badge>
+              )}
             </span>
           </span>
           <ChevronIcon className={`size-5 shrink-0 text-ctp-subtext transition-transform ${open ? "rotate-180" : ""}`} />
@@ -57,7 +99,14 @@ function CourseCard({ paste, colorIndex, defaultOpen }: { paste: ParsedPaste; co
         {groups.length > 0 && (
           <ul className="divide-y divide-ctp-surface0">
             {groups.map((group) => (
-              <GroupRow key={group.id} group={group} />
+              <GroupRow
+                key={group.id}
+                courseCode={paste.code}
+                group={group}
+                isLocked={lockedId === group.id}
+                isExcluded={excluded.includes(`${paste.code}:${group.id}`)}
+                onToggleLock={onToggleLock}
+              />
             ))}
           </ul>
         )}
@@ -81,8 +130,20 @@ function CourseCard({ paste, colorIndex, defaultOpen }: { paste: ParsedPaste; co
   );
 }
 
-/** One group: id, DK/Sĩ số (+ "Đầy"), language, lecturers, sessions. */
-function GroupRow({ group }: { group: Group }) {
+/** One group: id, DK/Sĩ số (+ "Đầy"), language, lock state, lecturers, sessions. */
+function GroupRow({
+  courseCode,
+  group,
+  isLocked,
+  isExcluded,
+  onToggleLock,
+}: {
+  courseCode: string;
+  group: Group;
+  isLocked: boolean;
+  isExcluded: boolean;
+  onToggleLock: ToggleLock;
+}) {
   const full = isFull(group);
   return (
     <li className="py-3" data-group={group.id}>
@@ -94,6 +155,27 @@ function GroupRow({ group }: { group: Group }) {
         </span>
         {full && <Badge tone="red">Đầy</Badge>}
         <Badge tone={group.language === "TA" ? "blue" : "neutral"}>{group.language || "?"}</Badge>
+        {isLocked && (
+          <Badge tone="mauve">
+            <LockIcon className="size-3.5" />
+            Đã khoá
+          </Badge>
+        )}
+        {isExcluded && (
+          <Badge tone="red">
+            <BanIcon className="size-3.5" />
+            Đã loại
+          </Badge>
+        )}
+        <ToggleButton
+          pressed={isLocked}
+          onClick={() => onToggleLock(courseCode, group.id, !isLocked)}
+          aria-label={`Chọn nhóm này (${courseCode} ${group.id})`}
+          className="ml-auto px-3"
+        >
+          {isLocked ? <LockIcon className="size-4" /> : <UnlockIcon className="size-4" />}
+          Chọn nhóm này
+        </ToggleButton>
       </div>
       <p className="mt-1 text-sm text-ctp-subtext">
         GV: <span className="text-ctp-text">{group.lecturer ?? "—"}</span>

@@ -1,9 +1,10 @@
 import { usedDays, type GridBlock } from "../lib/view/grid";
 import { campusLabel, DAY_LONG, formatWeekList } from "../lib/view/format";
 import { courseColor } from "./courseColor";
+import { LockIcon } from "./ui";
 
 /** Mobile view (below md): one section per day, sessions in period order. */
-export function DayList({ blocks }: { blocks: GridBlock[] }) {
+export function DayList({ blocks, isLocked = () => false }: { blocks: GridBlock[]; isLocked?: (block: GridBlock) => boolean }) {
   return (
     <div className="space-y-4">
       {usedDays(blocks).map((day) => (
@@ -22,6 +23,12 @@ export function DayList({ blocks }: { blocks: GridBlock[] }) {
                     <p className="flex flex-wrap items-center gap-1.5 font-semibold">
                       {b.courseCode} <span className="font-mono font-normal text-ctp-text/90">{b.groupId}</span>
                       {b.kind === "lab" && <span className="rounded bg-ctp-crust/60 px-1.5 text-xs font-bold">TN</span>}
+                      {isLocked(b) && (
+                        <span className="inline-flex items-center gap-1 rounded bg-ctp-crust/60 px-1.5 text-xs font-bold">
+                          <LockIcon className="size-3" />
+                          Đã khoá
+                        </span>
+                      )}
                     </p>
                     <p className="text-ctp-text/90">
                       {b.room} · {campusLabel(b.campus)}
