@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { diagnosticText, PARSE_TEMPLATES, parseWarningText, SOLVER_TEMPLATES, TIME_TEMPLATES, timeWarningText } from "../src/app/messages";
 import { defaultPrefs } from "../src/app/state";
 import { parse, PARSE_WARNING_CODES } from "../src/lib/parser";
-import { SOLVER_DIAGNOSTIC_CODES, solve } from "../src/lib/solver";
+import { CONSTRAINTS, SOLVER_DIAGNOSTIC_CODES, solve } from "../src/lib/solver";
 import { buildMasks, TIME_WARNING_CODES } from "../src/lib/timing";
+import { itemLabel } from "../src/lib/view/format";
 import { readFixture } from "./fixtureText";
 
 const CO2007 = readFixture("CO2007.txt");
@@ -68,6 +69,42 @@ describe("real warnings are translated", () => {
   });
 });
 
+describe("the Phase 7 requirements are named in Vietnamese", () => {
+  it("every constraint of CONSTRAINTS has a label, including the new ones", () => {
+    for (const name of CONSTRAINTS) {
+      expect(itemLabel(name), name).not.toBe(name); // not the raw English key
+      expect(itemLabel(name), name).toMatch(/[a-zA-Zăâđêôơư]/);
+    }
+    expect(itemLabel("programs")).toBe("Chương trình");
+    expect(itemLabel("partsOff")).toBe("Buổi nghỉ");
+  });
+
+  it("translates the missing-program diagnostic, naming the course and the programs it has", () => {
+    // SK2001 has only A and CC groups, so requiring L leaves it with nothing.
+    const courses = buildMasks([...parse(readFixture("SK2001.txt")).courses, ...parse(CO2011).courses]).courses;
+    const prefs = { ...defaultPrefs(), programs: { mode: "required" as const, allowed: ["L"] } };
+    const detail = solve(courses, prefs).diagnosticDetails.find((d) => d.code === "course-no-program")!;
+    expect(detail).toBeDefined();
+    expect(diagnosticText(detail)).toBe(
+      "SK2001: không có nhóm nào thuộc chương trình bắt buộc (L (đại trà)); môn này chỉ có A (Tiếng Nhật / Việt-Pháp), CC (chất lượng cao).",
+    );
+    expectVietnamese(diagnosticText(detail), detail.message);
+  });
+
+  it("names the new requirements when they are relaxed", () => {
+    const courses = buildMasks(parse(CO2011).courses).courses;
+    const prefs = {
+      ...defaultPrefs(),
+      programs: { mode: "required" as const, allowed: ["XX"] }, // a program CO2011 does not have
+      partsOff: { mode: "required" as const, parts: [{ day: 2 as const, part: "morning" as const }] },
+    };
+    const details = solve(courses, prefs).diagnosticDetails;
+    const relaxed = details.find((d) => d.code === "relaxed")!;
+    expect(diagnosticText(relaxed)).toBe("Đã tạm chuyển thành ưu tiên (trọng số 1000): Chương trình, Buổi nghỉ.");
+    for (const d of details) expectVietnamese(diagnosticText(d), d.message);
+  });
+});
+
 describe("fallback to the English text", () => {
   it("for an unknown code or malformed params", () => {
     expect(parseWarningText({ code: "new-code", params: {}, message: "some English" })).toBe("some English");
@@ -75,5 +112,8 @@ describe("fallback to the English text", () => {
     expect(diagnosticText({ code: "locked-overlap", params: { a: "X", b: "Y", overlap: [{ day: 99 }] }, message: "overlap" })).toBe("overlap");
     expect(timeWarningText({ code: "toString", params: {}, message: "english" })).toBe("english");
     expect(diagnosticText({ code: "relaxed", params: null as unknown as Record<string, unknown>, message: "relaxed" })).toBe("relaxed");
+    // An empty program list would read as "(); môn này chỉ có ()" - fall back instead.
+    expect(diagnosticText({ code: "course-no-program", params: { course: "SK2001", allowed: [], available: ["A"] }, message: "no program" })).toBe("no program");
+    expect(diagnosticText({ code: "course-no-program", params: { course: 5, allowed: ["L"], available: ["A"] }, message: "no program" })).toBe("no program");
   });
 });

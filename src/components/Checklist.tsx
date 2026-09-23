@@ -1,8 +1,8 @@
 import type { Schedule } from "../lib/solver";
 import { checklistText, scheduleCredits } from "../lib/view/checklist";
-import { formatCredits, groupIdOf } from "../lib/view/format";
+import { formatCredits, groupIdOf, programBadge } from "../lib/view/format";
 import { courseColor } from "./courseColor";
-import { Button, Card, CheckIcon, CopyIcon } from "./ui";
+import { Badge, Button, Card, CheckIcon, CopyIcon } from "./ui";
 
 /**
  * Step 5: one row per course of the chosen schedule — the group id to type
@@ -80,6 +80,7 @@ export function Checklist({
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="font-mono text-2xl font-bold tracking-wide">{id}</span>
+                <Badge tone="mauve">{programBadge(pick.group.group)}</Badge>
                 <Button variant="ghost" onClick={() => onCopy(id)} aria-label={`Sao chép ${id}`} className="px-3 print:hidden">
                   <CopyIcon className="size-4" />
                   Sao chép

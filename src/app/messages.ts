@@ -1,4 +1,4 @@
-import type { ParseWarning, ParseWarningCode } from "../lib/parser";
+import { programLabel, type ParseWarning, type ParseWarningCode } from "../lib/parser";
 import type { SolverDiagnostic, SolverDiagnosticCode } from "../lib/solver";
 import type { ConflictSummaryItem, TimeWarning, TimeWarningCode } from "../lib/timing";
 import { DAY_LONG, formatRanges, itemLabel } from "../lib/view/format";
@@ -22,6 +22,11 @@ const numbers = (value: unknown): number[] | null =>
 const key = (value: unknown): string | null => str(value)?.replace(":", " ") ?? null;
 /** ["campuses", "language"] → "Cơ sở, Ngôn ngữ". */
 const labels = (value: unknown): string | null => strings(value)?.map(itemLabel).join(", ") ?? null;
+/** ["A", "CC"] → "A (Tiếng Nhật / Việt-Pháp), CC (chất lượng cao)"; null when the list is empty. */
+const programs = (value: unknown): string | null => {
+  const codes = strings(value);
+  return codes && codes.length > 0 ? codes.map((code) => `${code} (${programLabel(code)})`).join(", ") : null;
+};
 
 /** Fills a template only when every value is present. */
 function fill(values: (string | number | null)[], build: (...v: (string | number)[]) => string): string | null {
@@ -87,6 +92,10 @@ export const SOLVER_TEMPLATES: Record<SolverDiagnosticCode, Template> = {
     fill([str(p.course), labels(p.constraints)], (course, names) => `${course}: không nhóm nào đáp ứng cùng lúc các yêu cầu bắt buộc (${names}).`),
   "no-combination-required": (p) =>
     fill([labels(p.constraints)], (names) => `Không có cách chọn nhóm nào vừa không trùng giờ vừa đáp ứng mọi yêu cầu bắt buộc (${names}).`),
+  "course-no-program": (p) =>
+    fill([str(p.course), programs(p.allowed), programs(p.available)], (course, allowed, available) =>
+      `${course}: không có nhóm nào thuộc chương trình bắt buộc (${allowed}); môn này chỉ có ${available}.`,
+    ),
   relaxed: (p) =>
     fill([labels(p.constraints), num(p.weight)], (names, weight) => `Đã tạm chuyển thành ưu tiên (trọng số ${weight}): ${names}.`),
   "course-no-groups": (p) => fill([str(p.course)], (course) => `${course}: môn này không có nhóm lớp nào.`),

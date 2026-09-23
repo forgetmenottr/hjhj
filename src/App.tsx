@@ -18,10 +18,13 @@ import { TimetableSection } from "./components/TimetableSection";
 import { Button, Toast } from "./components/ui";
 import { scheduleToIcs } from "./lib/export/ics";
 import { imageLayout } from "./lib/export/image";
-import { STEP_LABELS } from "./lib/view/format";
+import { programCounts, STEP_LABELS } from "./lib/view/format";
 import { blocksForWeek, standardWeeks, toGridBlocks, type GridBlock, type WeekFilter } from "./lib/view/grid";
+import { staleCourses } from "./lib/view/summary";
 
 const TOAST_MS = 2500;
+/** How often the "Dán … trước" lines are refreshed. */
+const CLOCK_MS = 30_000;
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, undefined, () => initialState(loadSaved()));
@@ -29,6 +32,8 @@ export default function App() {
   const { step, pastes, prefs, autoLocked, registered, semesterStart, autoRun } = state;
   const [week, setWeek] = useState<WeekFilter>("all");
   const [toast, setToast] = useState<string | null>(null);
+  // The clock lives here, so every helper below it stays pure and testable.
+  const [now, setNow] = useState(() => Date.now());
 
   // Raw text is the source of truth; parse it whenever it changes.
   const parsed = useMemo(() => pastes.map(parsePaste), [pastes]);
@@ -36,8 +41,11 @@ export default function App() {
   const courseNames = useMemo(() => Object.fromEntries(parsed.flatMap((p) => (p.course ? [[p.code, p.course.name]] : []))), [parsed]);
   const credits = useMemo(() => Object.fromEntries(courses.map((c) => [c.code, c.credits])), [courses]);
   const standard = useMemo(() => standardWeeks(courses), [courses]);
+  const programs = useMemo(() => programCounts(courses), [courses]);
+  const pastedAt = useMemo(() => Object.fromEntries(pastes.map((p) => [p.code, p.pastedAt])), [pastes]);
   const hasCourses = courses.length > 0;
   const schedule = selectedSchedule(state);
+  const stalePicks = useMemo(() => (schedule ? staleCourses(schedule, pastedAt, now) : []), [schedule, pastedAt, now]);
 
   // Persist the raw pastes, the preferences (with locks), the marks and the semester start.
   useEffect(() => {
@@ -77,13 +85,27 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  // Keep the "Dán … trước" lines honest while the tab stays open.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_MS);
+    return () => clearInterval(timer);
+  }, []);
+
   // Results and registration need room for the weekly grid; the other steps read better narrow.
   const width = step >= 4 ? "max-w-6xl" : "max-w-3xl";
   const goTo = (target: Step) => dispatch({ type: "goTo", step: target });
   const runSolver = () => run(courses, prefs);
   const addPaste = (raw: string) => {
-    dispatch({ type: "addPaste", raw });
+    dispatch({ type: "addPaste", raw, at: new Date().toISOString() });
+    setNow(Date.now());
     return splitByCourse(raw).length > 0;
+  };
+  // The missing-program diagnostic offers this: drop the filter and try again.
+  const dropProgramFilter = () => {
+    const next = structuredClone(prefs);
+    next.programs.mode = "off";
+    dispatch({ type: "setPrefs", prefs: next });
+    run(courses, next);
   };
   const toggleLock = (courseCode: string, groupId: string, lock: boolean) =>
     dispatch(lock ? { type: "lock", courseCode, groupId } : { type: "unlock", courseCode });
@@ -128,6 +150,7 @@ export default function App() {
       outcome={state.result}
       error={state.error}
       stale={isResultStale(state)}
+      staleCourses={state.step >= 4 ? stalePicks : []}
       hasAutoLocks={autoLocked.length > 0}
       quiet={quiet}
       onCancel={() => {
@@ -136,6 +159,7 @@ export default function App() {
       }}
       onRerun={runSolver}
       onUndoAutoLocks={() => dispatch({ type: "undoAutoLocks" })}
+      onDropProgramFilter={dropProgramFilter}
     />
   );
 
@@ -158,13 +182,18 @@ export default function App() {
         </h1>
 
         {step === 1 && (
-          <PasteInput courses={parsed} notice={state.notice} onAdd={addPaste} onRemove={(code) => dispatch({ type: "removeCourse", code })} />
+          <PasteInput courses={parsed} notice={state.notice} now={now} onAdd={addPaste} onRemove={(code) => dispatch({ type: "removeCourse", code })} />
         )}
-        {step === 2 && <CoursePreview courses={parsed} locked={prefs.locked} excluded={prefs.excluded} onToggleLock={toggleLock} />}
+        {step === 2 && <CoursePreview courses={parsed} locked={prefs.locked} excluded={prefs.excluded} now={now} onToggleLock={toggleLock} />}
         {step === 3 && (
           <div className="space-y-4">
             {selections}
-            <PreferencesForm prefs={prefs} onChange={(next) => dispatch({ type: "setPrefs", prefs: next })} onReset={() => dispatch({ type: "resetPrefs" })} />
+            <PreferencesForm
+              prefs={prefs}
+              programs={programs}
+              onChange={(next) => dispatch({ type: "setPrefs", prefs: next })}
+              onReset={() => dispatch({ type: "resetPrefs" })}
+            />
           </div>
         )}
         {step === 4 && (

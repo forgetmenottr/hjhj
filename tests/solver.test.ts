@@ -2,10 +2,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse, type Course } from "../src/lib/parser";
 import { buildMasks, conflicts, type IndexedCourse, type IndexedGroup } from "../src/lib/timing";
+import { programOf } from "../src/lib/parser";
 import {
+  applyConstraints,
   CONSTRAINTS,
+  constraintsWithMode,
   createScorer,
   DEFAULT_PREFERENCES,
+  equivalenceKey,
   groupFeatures,
   normalizePreferences,
   solve as solveRaw,
@@ -71,6 +75,7 @@ function blank(p: Preferences): void {
 }
 
 const keysOf = (s: Schedule) => s.picks.map((p) => p.group.key);
+const byKeyIn = (courses: IndexedCourse[], key: string): IndexedGroup => courses.flatMap((c) => c.groups).find((g) => g.key === key)!;
 const allKeys = (r: SolveResult) => r.schedules.flatMap((s) => s.picks.flatMap((p) => [p.group.key, ...p.alternatives]));
 
 function expectConflictFree(result: SolveResult): void {
@@ -114,6 +119,7 @@ function referenceCollapse(groups: IndexedGroup[], p: Preferences): IndexedGroup
       Array.from(g.mask),
       sessions,
       g.group.language,
+      violates("programs", g.group, p),
       g.group.registered >= g.group.capacity,
       violates("avoidLecturers", g.group, p),
     ]);
@@ -172,6 +178,18 @@ const PREFERENCE_SETS: [string, Preferences][] = [
   ["campus [1] required", prefs((p) => { p.campuses = { mode: "required", allowed: [1] }; })],
   ["daysOff [2] required", prefs((p) => { p.daysOff = { mode: "required", days: [2] }; })],
   ["freeSeats required", prefs((p) => { p.freeSeats = { mode: "required" }; })],
+  ["programs [L] required", prefs((p) => { p.programs = { mode: "required", allowed: ["L"] }; })],
+  ["programs [CC, TN] required", prefs((p) => { p.programs = { mode: "required", allowed: ["CC", "TN"] }; })],
+  ["programs [L] preferred", prefs((p) => { blank(p); p.weights.preferredItems = 10; p.programs = { mode: "preferred", allowed: ["L"] }; })],
+  ["partsOff morning of Thứ 2 required", prefs((p) => { p.partsOff = { mode: "required", parts: [{ day: 2, part: "morning" }] }; })],
+  ["partsOff afternoon of Thứ 6 + evening of Thứ 3 required", prefs((p) => {
+    p.partsOff = { mode: "required", parts: [{ day: 3, part: "evening" }, { day: 6, part: "afternoon" }] };
+  })],
+  ["partsOff preferred", prefs((p) => {
+    blank(p);
+    p.weights.preferredItems = 10;
+    p.partsOff = { mode: "preferred", parts: [{ day: 2, part: "morning" }, { day: 5, part: "afternoon" }] };
+  })],
 ];
 
 // ---------------------------------------------------------------------------
@@ -348,6 +366,166 @@ describe("constraints (CO2007 + CO2011)", () => {
 
   it("returns only conflict-free schedules for every preference set", () => {
     for (const [, p] of PREFERENCE_SETS) expectConflictFree(solve(BOTH, { ...p, topK: 10_000 }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Program track (Phase 7)
+// ---------------------------------------------------------------------------
+
+const ALL_DAYS_2_TO_8 = [2, 3, 4, 5, 6, 7, 8] as const;
+
+describe("programs (chuong trinh)", () => {
+  const ALL = index(parseFixtures(ALL_FIXTURES));
+  const programsOf = (result: SolveResult) =>
+    new Set(result.schedules.flatMap((s) => s.picks.map((pick) => programOf(pick.group.group))));
+
+  it("required [L] -> every pick and every alternative is an L group", () => {
+    const result = solve(BOTH, prefs((p) => { p.programs = { mode: "required", allowed: ["L"] }; p.topK = 10_000; }));
+    expect(result.status).toBe("ok");
+    expect(programsOf(result)).toEqual(new Set(["L"]));
+    for (const key of allKeys(result)) expect(key.split(":")[1].startsWith("L")).toBe(true);
+    // CO2007 has 8 L groups and CO2011 has 3, so nothing outside them can appear.
+    expect(allKeys(result)).not.toContain("CO2007:A01_A01");
+    expect(allKeys(result)).not.toContain("CO2011:TN01");
+  });
+
+  it("required [CC, TN] keeps both programs and drops the others", () => {
+    const result = solve(BOTH, prefs((p) => { p.programs = { mode: "required", allowed: ["CC", "TN"] }; p.topK = 10_000; }));
+    expect(result.status).toBe("ok");
+    expect(programsOf(result)).toEqual(new Set(["CC", "TN"]));
+  });
+
+  it("with nothing chosen it filters nothing, whatever the mode", () => {
+    const off = solve(BOTH, prefs());
+    for (const mode of ["required", "preferred"] as const) {
+      const p = prefs((q) => { q.programs = { mode, allowed: [] }; });
+      expect(constraintsWithMode(p, mode)).not.toContain("programs");
+      const result = solve(BOTH, p);
+      expect(ranking(result)).toEqual(ranking(off));
+      expect(result.relaxed).toEqual([]);
+    }
+    // The predicate agrees: no group breaks a program filter that is empty.
+    const empty = prefs((q) => { q.programs = { mode: "required", allowed: [] }; });
+    expect(BOTH[0].groups.some((g) => violates("programs", g.group, empty))).toBe(false);
+  });
+
+  it("does not collapse two same-time groups of different programs", () => {
+    // Derived: a copy of CO2011:CC01 (Fri 2-3) registered under an L id, so the
+    // only difference between the two groups is the program.
+    const courses = parseFixtures(["CO2011.txt"]);
+    const copy = structuredClone(courses[0].groups.find((g) => g.id === "CC01")!);
+    copy.id = "L09";
+    copy.theoryGroup = "L09";
+    courses[0].groups.push(copy);
+    const indexed = index(courses);
+    const withFilter = prefs((p) => { p.programs = { mode: "required", allowed: ["L"] }; });
+    expect(equivalenceKey(byKeyIn(indexed, "CO2011:CC01"), withFilter)).not.toBe(
+      equivalenceKey(byKeyIn(indexed, "CO2011:L09"), withFilter),
+    );
+    const result = solve(indexed, { ...withFilter, topK: 100 });
+    expect(allKeys(result)).toContain("CO2011:L09");
+    expect(allKeys(result)).not.toContain("CO2011:CC01");
+  });
+
+  it(`required [L] on all ${ALL_FIXTURES.length} fixtures: SK2001 triggers the missing-program diagnostic`, () => {
+    const result = solve(ALL, prefs((p) => { p.programs = { mode: "required", allowed: ["L"] }; }));
+    // SK2001 has only A and CC groups, so the strict attempt cannot use it.
+    const missing = result.diagnosticDetails.filter((d) => d.code === "course-no-program");
+    expect(missing).toHaveLength(1);
+    expect(missing[0].params).toEqual({ course: "SK2001", allowed: ["L"], available: ["A", "CC"] });
+    expect(missing[0].message).toContain("SK2001");
+    // The course really has no L group; every other fixture does.
+    for (const course of ALL) {
+      const programs = new Set(course.groups.map((g) => programOf(g.group)));
+      expect(programs.has("L"), course.code).toBe(course.code !== "SK2001");
+    }
+    // The filter is then relaxed rather than failing outright.
+    expect(result.status).toBe("relaxed");
+    expect(result.relaxed).toEqual(["programs"]);
+  });
+
+  it("names the other blocking requirements separately from the program one", () => {
+    const result = solve(ALL, prefs((p) => {
+      p.programs = { mode: "required", allowed: ["L"] };
+      p.language = { mode: "required", allowed: ["TA"] }; // no fixture group is TA
+    }));
+    const codes = result.diagnosticDetails.filter((d) => d.params.course === "SK2001").map((d) => d.code);
+    expect(codes).toEqual(["course-no-program", "course-blocked"]);
+    const blocked = result.diagnosticDetails.find((d) => d.code === "course-blocked" && d.params.course === "SK2001")!;
+    expect(blocked.params.constraints).toEqual(["language"]); // "programs" is not repeated here
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Half-day off (Phase 7)
+// ---------------------------------------------------------------------------
+
+describe("partsOff (buoi nghi)", () => {
+  const withParts = (parts: Preferences["partsOff"]["parts"]) =>
+    prefs((p) => { p.partsOff = { mode: "required", parts }; });
+
+  it("a group is caught by the half-day its periods fall in, and by no other", () => {
+    // CO2011:L01 meets Thu 2 tiet 2-3 only, so only the morning of Thu 2 hits it.
+    const l01 = byKeyIn(CO2011_ONLY, "CO2011:L01").group;
+    expect(l01.sessions.filter((s) => s.day === 2).flatMap((s) => s.periods).every((n) => n <= 6)).toBe(true);
+    expect(violates("partsOff", l01, withParts([{ day: 2, part: "morning" }]))).toBe(true);
+    expect(violates("partsOff", l01, withParts([{ day: 2, part: "afternoon" }]))).toBe(false);
+    expect(violates("partsOff", l01, withParts([{ day: 2, part: "evening" }]))).toBe(false);
+    expect(violates("partsOff", l01, withParts([{ day: 3, part: "morning" }]))).toBe(false); // same part, other day
+
+    // CO2007:CC01_CC01 meets Thu 2 in the afternoon only - the mirror case.
+    const cc01 = byKeyIn(BOTH, "CO2007:CC01_CC01").group;
+    expect(violates("partsOff", cc01, withParts([{ day: 2, part: "morning" }]))).toBe(false);
+    expect(violates("partsOff", cc01, withParts([{ day: 2, part: "afternoon" }]))).toBe(true);
+  });
+
+  it("whole day off and the three parts filter the same groups, but stay separate constraints", () => {
+    const groups = BOTH.flatMap((c) => c.groups);
+    const allThree = withParts([
+      { day: 2, part: "morning" },
+      { day: 2, part: "afternoon" },
+      { day: 2, part: "evening" },
+    ]);
+    const wholeDay = prefs((p) => { p.daysOff = { mode: "required", days: [2] }; });
+    // Periods 1-16 are covered by the three buckets, so the results coincide...
+    expect(groups.filter((g) => violates("partsOff", g.group, allThree)).map((g) => g.key)).toEqual(
+      groups.filter((g) => violates("daysOff", g.group, wholeDay)).map((g) => g.key),
+    );
+    expect(groups.filter((g) => violates("partsOff", g.group, allThree))).not.toHaveLength(0);
+    // ...but neither constraint reads the other's list: picking all three parts does not set daysOff.
+    expect(allThree.daysOff.days).toEqual([]);
+    expect(groups.some((g) => violates("daysOff", g.group, allThree))).toBe(false);
+    expect(groups.some((g) => violates("partsOff", g.group, wholeDay))).toBe(false);
+  });
+
+  it("afternoon of Thu 6 off on CO2007: exactly the groups without a Friday 7-12 session survive", () => {
+    const p = withParts([{ day: 6, part: "afternoon" }]);
+    // Expected list computed here from the parsed sessions, not from the solver.
+    const expected = BOTH[0].groups
+      .filter((g) => !g.group.sessions.some((s) => s.day === 6 && s.periods.some((n) => n >= 7 && n <= 12)))
+      .map((g) => g.group.id);
+    expect(expected).toEqual([
+      "A01_A01", "CC01_CC01", "CC01_CC02", "CC02_CC04", "CC04_CC07",
+      "L01_L02", "L03_L05", "L03_L06", "L04_L07", "L04_L08", "TN01_TN01",
+    ]);
+    expect(applyConstraints(BOTH[0].groups, ["partsOff"], p).map((g) => g.group.id)).toEqual(expected);
+
+    const result = solve(BOTH, { ...p, topK: 10_000 });
+    expect(result.status).toBe("ok");
+    const sessions = result.schedules.flatMap((s) => s.picks.flatMap((pick) => pick.group.group.sessions));
+    expect(sessions.length).toBeGreaterThan(0);
+    expect(sessions.some((s) => s.day === 6 && s.periods.some((n) => n >= 7 && n <= 12))).toBe(false);
+  });
+
+  it("evening (tiet 13-16) is its own bucket, and nothing selected filters nothing", () => {
+    const groups = BOTH.flatMap((c) => c.groups);
+    // No fixture group teaches after tiet 12, so an evening-only selection keeps them all.
+    const everyEvening = withParts(ALL_DAYS_2_TO_8.map((day) => ({ day, part: "evening" as const })));
+    expect(applyConstraints(groups, ["partsOff"], everyEvening)).toHaveLength(groups.length);
+    const empty = withParts([]);
+    expect(constraintsWithMode(empty, "required")).not.toContain("partsOff");
+    expect(ranking(solve(BOTH, empty))).toEqual(ranking(solve(BOTH, prefs())));
   });
 });
 

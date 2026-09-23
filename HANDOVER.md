@@ -10,7 +10,7 @@ Every number below was re-measured on 2026-09-23 on the six fixtures in `tests/f
 ## 1. TL;DR
 
 - **What:** a client-only web app. HCMUT students paste the course blocks copied from the **registration page**, set constraints, and get the top-5 conflict-free timetables. From there they can lock groups, handle a full group, and register from a checklist. Exports: `.ics`, PNG, print.
-- **Status:** Phases 1–6 are done and committed (`d1ab088`) but **not pushed or deployed yet**. 346 tests pass (16 files); `tsc -b`, `oxlint` and `vite build` are clean.
+- **Status:** Phases 1–7 are done and committed but **not pushed or deployed yet**. 395 tests pass (16 files); `tsc -b`, `oxlint` and `vite build` are clean.
 - **Stack:** React 19, Vite 8, TypeScript ~6.0, Tailwind v4 and Vitest 5. The solver runs in a module Web Worker. The only runtime dependencies are `react` and `react-dom`.
 - **Run:** `npm install`, then `npm run dev` → http://localhost:5173/
 - **Test:** `npm test` (about 15 s). Full gate: bash `npm test && npx tsc -b && npm run lint && npm run build`. On PowerShell 5.1 the same gate is in §7.
@@ -54,6 +54,7 @@ The first session line reads:
 
 Encodings:
 - **Group ids.** `A01_A01` = theory group `_` practice/lab group (`Group.practiceGroup = "A01"`). `A01` (no `_`) = theory only (`practiceGroup = null`). Regex: `/^([A-Z]{1,4}\d{2})(?:_([A-Z]{1,4}\d{2}))?$/`.
+- **Program track** (Phase 7). The leading letters of the theory group code are the *chương trình đào tạo*: `L` = đại trà, `A` = Tiếng Nhật / Việt-Pháp, `CC` = chất lượng cao, `TN` = tài năng. `programOf(group)` extracts them with `/^[A-Z]+/`; an unknown prefix is kept as it is and labelled "Khác", never dropped. Per fixture: CO2001 L1/A1/CC2, CO2003 L9/A2/CC7/TN1, CO2007 L8/A2/CC7/TN1, CO2011 L3/A1/CC5/TN1, **SK2001 A4/CC60 only**, SP1031 L7/A5/CC9. SK2001 is therefore the fixture that triggers the missing-program diagnostic.
 - **Weeks string.** 30 characters. The character at index *i* is week *i*+1, and `-` means no class. The digit should be `week % 10`; if it is not, position wins and the parser warns (`week-digit-mismatch`).
   - `1234567-90123456` = weeks 1–7 and 9–16; week 8 is the usual mid-term break.
 - **Labs** meet on alternating weeks, e.g. `-----6---0-2-4` = weeks 6, 10, 12, 14. `Session.kind` is `"lab"` when no two weeks are consecutive, otherwise `"theory"`.
@@ -66,7 +67,7 @@ Encodings:
 - **Periods.** Tiết 1–16. Period *n* runs from (n+5):00 to (n+5):50 (`src/lib/export/periods.ts`).
   - Tiết 1 = 06:00–06:50, tiết 7 = 12:00–12:50, tiết 16 = 21:00–21:50.
   - A session covering periods 2–4 runs 07:00–09:50.
-  - Score buckets (`src/lib/solver/constants.ts`): `MORNING` = 1–6, `AFTERNOON` = 7–12, `EARLY` = 1–2.
+  - Score buckets (`src/lib/solver/constants.ts`): `MORNING` = 1–6, `AFTERNOON` = 7–12, `EVENING` = 13–16, `EARLY` = 1–2. `DAY_PARTS` maps the three half-day names onto the first three. No fixture group teaches after tiết 12, so the evening bucket is empty on this data.
 - **Several courses in one paste.** Each course block keeps its own `STT` header and summary row, and the STT value may repeat (all `1`). Credits are matched by **course code** (SPEC §3). `src/app/pastes.ts:splitByCourse` cuts the text at each course header, together with the summary lines just above it.
 
 ---
@@ -104,7 +105,7 @@ paste text ──splitByCourse──► Paste[] {code, raw}          src/app/pas
 **Data model.** Parser types are in SPEC §6 and `src/lib/parser/types.ts`. Warnings now also carry `code` and `params`; see §9 for how this departs from the SPEC. Downstream types:
 - `IndexedGroup { key: "CO2007:A01_A01"; courseCode; group: Group; mask: TimeMask }` and `IndexedCourse { code; name; credits; groups: IndexedGroup[] }` (`timing/build.ts`). A **group key** `"CODE:GROUPID"` is the identity used everywhere: locks, excluded groups, UIDs, test assertions.
 - `Preferences` (`solver/types.ts`):
-  - five group-level constraints (`campuses`, `daysOff`, `language`, `freeSeats`, `avoidLecturers`), each with a `Mode`: `"off" | "required" | "preferred"`;
+  - seven group-level constraints, in `CONSTRAINTS` order: `programs`, `campuses`, `daysOff`, `partsOff`, `language`, `freeSeats`, `avoidLecturers`, each with a `Mode`: `"off" | "required" | "preferred"`. `programs` with an empty `allowed`, and `partsOff` with an empty `parts`, filter nothing and are never relaxed (`isActive`), so the program card can default to "Bắt buộc" with nothing chosen;
   - `locked: Record<courseCode, groupId>` and `excluded: string[]` (keys);
   - `weights` (0..10), `topK` (5) and `maxNodes` (5,000,000).
 - `SolveResult { status: "ok" | "relaxed" | "infeasible"; schedules: Schedule[]; relaxed; diagnostics: string[]; diagnosticDetails: SolverDiagnostic[]; stats: {nodes, ms, truncated} }`. `Schedule { picks: Pick[]; penalty; score; breakdown; violations }`, and `Pick { courseCode; group: IndexedGroup; alternatives: string[] }`.
@@ -113,6 +114,7 @@ paste text ──splitByCourse──► Paste[] {code, raw}          src/app/pas
   - navigation and solver: `step` (1–5), `solverStatus`, `result` (tagged with `id` and `version`), `error`, `notice`, `version`, `request`;
   - selections and export: `autoLocked`, `registered`, `semesterStart`;
   - results view: `selected`, `autoRun`.
+- `Paste` (`app/pastes.ts`) = `{ code; raw; pastedAt: string | null }`. `pastedAt` is an ISO timestamp set when the block is added or re-pasted; a save written before Phase 7 loads as `null`.
 - **localStorage** key `tkb:v1` = `{ pastes, prefs, autoLocked, registered, semesterStart }` (`src/app/storage.ts`). Results are never stored. On load, the data is merged over the defaults, normalized, and pruned: locks and marks that point at groups no longer pasted are dropped.
 
 **Key invariant — time masks** (`src/lib/timing/constants.ts`, `mask.ts`):
@@ -140,6 +142,8 @@ Signatures are copied from the source. Types are summarized in §3.
 | Signature | Purpose |
 |---|---|
 | `parse(text: string): ParseResult` | Parse registration-page text into `{ courses, warnings }`; tab or space layouts; never throws |
+| `programOf(group: Pick<Group, "theoryGroup">): string` | Program track prefix: `"L01_L02"` → theory group `"L01"` → `"L"`; `""` when the code has no leading letters |
+| `PROGRAM_CODES` (`["L","A","CC","TN"]`) / `PROGRAM_LABELS: Record<string,string>` / `programLabel(code: string): string` | The four known programs and their Vietnamese names; anything else is "Khác" |
 | `PARSE_WARNING_CODES` (16 codes) / `type ParseWarningCode` | Every `ParseWarning.code`, e.g. `session-no-room`, `week-digit-mismatch` |
 | types `Day, Session, Group, Course, ParseWarning{line,text,message,code,params}, ParseResult` | Data model |
 
@@ -165,9 +169,11 @@ Signatures are copied from the source. Types are summarized in §3.
 | `solve(courses: IndexedCourse[], input: Preferences): SolveResult` | Top-K pipeline: strict → relaxed → infeasible, with diagnostics |
 | `normalizePreferences(input: Preferences): Preferences` | Repair any shape (bad modes → off, weights clamped 0..10, bad lists → []) |
 | `DEFAULT_PREFERENCES`, `CONSTRAINTS`, `type Mode`, `type ConstraintName` | Solver defaults (all constraints off); constraint names in fixed order |
-| `SOLVER_DIAGNOSTIC_CODES` (14) / `type SolverDiagnostic {code, params, message}` | Structured diagnostics, 1:1 with `diagnostics` |
-| `MORNING, AFTERNOON, EARLY, RELAX_WEIGHT=1000, MAX_WEIGHT=10, IDLE_PER_DAY=11, DEFAULT_TOP_K=5, DEFAULT_MAX_NODES=5_000_000` | Constants |
-| `constraintsWithMode(prefs: Preferences, mode: Mode): ConstraintName[]` | Constraints in a given mode |
+| `SOLVER_DIAGNOSTIC_CODES` (15) / `type SolverDiagnostic {code, params, message}` | Structured diagnostics, 1:1 with `diagnostics`. Phase 7 added `course-no-program` `{course, allowed, available}` |
+| `MORNING, AFTERNOON, EVENING, EARLY, DAY_PARTS, RELAX_WEIGHT=1000, MAX_WEIGHT=10, IDLE_PER_DAY=11, DEFAULT_TOP_K=5, DEFAULT_MAX_NODES=5_000_000` | Constants |
+| `DAY_PART_NAMES` (`["morning","afternoon","evening"]`) / `type DayPart` / `interface DayPartOff { day: Day; part: DayPart }` | Half-day names and one selected half-day |
+| `constraintsWithMode(prefs: Preferences, mode: Mode): ConstraintName[]` | Constraints in a given mode **that have something selected** (see `isActive`) |
+| `isActive(name: ConstraintName, prefs: Preferences): boolean` | False only for `programs` / `partsOff` with an empty list |
 | `violates(name: ConstraintName, group: Group, prefs: Preferences): boolean` | Constraint predicate |
 | `normalizeName(name: string): string` | Lowercase, strip diacritics, `đ→d` (lecturer matching) |
 | `applyHardRules(course: IndexedCourse, prefs: Preferences): IndexedGroup[]` | Drop excluded groups; keep only the locked group (always hard) |
@@ -205,8 +211,11 @@ Signatures are copied from the source. Types are summarized in §3.
 | `formatWeeks(weeks: number[]): string` / `formatRanges(numbers: number[]): string` / `contiguousRuns(numbers: number[]): [number, number][]` / `formatWeekList(weeks: number[]): string` | `"T6–7, 9–11"`, `"1–7, 9–16"`, `[[2,4],[8,8]]`, `"6,10,12,14"` |
 | `formatSession(s: Session): string` / `formatCredits(credits: number \| null): string` / `campusLabel(campus: 1 \| 2 \| null): string` | `"T2 · tiết 2–4 · A4-409 · CS1"`, `"0 TC"`, `"CS1"` |
 | `isFull(group: Pick<Group, "registered" \| "capacity">): boolean` / `groupIdOf(key: string): string` / `percent(value: number): string` / `itemLabel(item: string): string` | Full group, `"CO2007:L01_L02"` → `"L01_L02"`, `"46%"`, Vietnamese item name |
+| `programBadge(group: Pick<Group,"theoryGroup">): string` / `programCounts(courses: Course[]): ProgramCount[]` / `programOptionLabel(p: ProgramCount): string` | `"L · đại trà"`; the programs present in the pasted courses with their group counts (known codes first); `"L — đại trà (18 nhóm)"` |
+| `STALE_PASTE_MS = 30 * 60 * 1000` / `formatAge(pastedAt: string \| null, now: number): string` / `isStalePaste(pastedAt: string \| null, now: number): boolean` | `"vừa xong"`, `"12 phút trước"`, `"2 giờ trước"`, `"hôm qua"`, `"3 ngày trước"`, `"không rõ thời điểm"`; stale ≥ 30 min **or** unknown. `now` is always a parameter |
 | `DAY_SHORT`, `DAY_LONG`, `ALL_DAYS`, `STEP_LABELS`, `ITEM_LABELS` | Vietnamese labels |
 | `relaxedViolations(schedule: Schedule, relaxed: readonly string[]): Violation[]` / `preferredViolations(schedule: Schedule, relaxed: readonly string[]): Violation[]` / `scheduleLabel(schedule: Schedule, index: number, relaxed: readonly string[]): string` | `"Lịch 2 · 87 điểm"` or `"Lịch 2 · ⚠ 1 yêu cầu"` |
+| `staleCourses(schedule: Schedule, pastedAt: Record<string, string \| null \| undefined>, now: number): string[]` | Courses of the schedule whose pasted data is stale, in pick order (drives the step 4–5 banner) |
 | `checklistText(schedule: Schedule): string` / `scheduleCredits(schedule: Schedule, credits: Record<string, number \| null \| undefined>): { total: number; unknown: string[] }` | Step 5 copy text (`CODE  GROUP` lines) and credit total |
 | `MOCHA`, `COURSE_ACCENTS`, `accentOf(index: number)`, `hexToRgb(hex: string): [number, number, number]`, `mixHex(top: string, bottom: string, amount: number): string` | Palette shared by the canvas and the contrast test |
 
@@ -221,7 +230,7 @@ Signatures are copied from the source. Types are summarized in §3.
   - `markFull(s, key, picks)`, `undoAutoLocks(s)`;
   - `pruneSelections(s, groupIdsByCourse(pastes))`, `sameSelections`, `groupKey`, `splitKey`.
 - **`storage.ts`:** `loadSaved(storage?)`, `saveState(state, storage?)`, `readDate(value)`, `STORAGE_KEY = "tkb:v1"`.
-- **`pastes.ts`:** `splitByCourse(raw)`, `mergePastes(existing, incoming)`, `parsePaste(paste)`, `schedulableCourses(pastes)`.
+- **`pastes.ts`:** `splitByCourse(raw, pastedAt = null)`, `mergePastes(existing, incoming)`, `parsePaste(paste)`, `schedulableCourses(pastes)`. The clock is the caller's: `App.addPaste` dispatches `{ type: "addPaste", raw, at: new Date().toISOString() }`.
 - **`useSolver.ts`:** `useSolver(dispatch: Dispatch<Action>): SolverControls` returns `{ run(courses, prefs), cancel() }` only.
 - **`messages.ts`:** `parseWarningText`, `timeWarningText`, `diagnosticText` (Vietnamese; English on fallback) and `PARSE_TEMPLATES` / `TIME_TEMPLATES` / `SOLVER_TEMPLATES`.
 - **`browser.ts`:** `downloadBlob(blob, filename)`, `copyText(text)`.
@@ -241,6 +250,7 @@ The repo was produced phase by phase by an AI coding agent working from written 
 | 4 worker + UI 1–4 | `4b36c5a` | **158 (8)** | worker protocol, reducer, storage, steps 1–4 |
 | 5 lock / full / weeks | `6c6c743` | **185 (9)** | locks, "Đã đầy" re-run, week selector, relaxed display |
 | 6 ship | `d1ab088` | **346 (16)** | step 5, export, Vietnamese codes, a11y, perf, SK2001, deploy |
+| 7 program / half-day / timestamps | (this commit) | **395 (16)** | `programs` + `partsOff` constraints, missing-program diagnostic, paste ages |
 
 These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 
@@ -335,6 +345,14 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
   - After "Thêm môn", focus fell to `<body>`. It now returns to the paste box.
   - The date input had no focus ring: Chrome only matches `:focus-within` there, so the ring is drawn on that.
 
+### Phase 7 — program track, half-day off, paste timestamps
+**Shipped:**
+- `programs`: `programOf` / `PROGRAM_LABELS` in `src/lib/parser/program.ts`, a new group-level constraint, the step-3 program card (first, visually separated, "Bước đầu tiên: chọn chương trình của bạn"), program badges in steps 2, 4 and 5, and the `course-no-program` diagnostic with its "Bỏ lọc chương trình" action;
+- `partsOff`: half-days off sharing the card "Ngày và buổi nghỉ" (and its mode) with `daysOff`, `EVENING` / `DAY_PARTS` in `solver/constants.ts`;
+- `Paste.pastedAt`, `formatAge` / `isStalePaste` / `staleCourses`, the "Dán … trước" lines in steps 1–2 and the stale banner in steps 4–5.
+
+**Decisions and deviations:** see §6 (the eight Phase 7 rows) — the main ones are the empty-selection rule (`isActive`), the app-level default for the program mode, treating an unknown paste age as stale, and putting `programOf` in the parser rather than in `view/` so the solver can use it without a layering violation.
+
 ---
 
 ## 6. Decision log
@@ -358,6 +376,14 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 | Union week view by default + week labels | The grid shows all weeks. Labs show "tuần 6,10,…"; theory outside the usual term shows "T1–5" / "T6–7, 9–11" / "T12–16" | `view/grid.ts:standardWeeks`, `weekLabel` | Yes |
 | Week grid keeps the all-weeks frame | Days and rows do not jump when switching weeks | `components/TimetableSection.tsx` (`frame` prop) | Yes |
 | Conflict table + incremental scoring | Leaf rescans dominated (≈ 5.5 s bundled); exact same integer totals, formulas and addition order, so the penalties are bit-identical | `solver/search.ts:conflictTable`, `solver/score.ts:createState` | Yes (the full `penalty()` path remains the reference) |
+| Program track lives in `src/lib/parser/program.ts`, not in `src/lib/view/` | `solver/filter.ts` needs `programOf`, and `view` already depends on `solver`; the parser is the lowest layer, and the prefix is a parsing convention of the group id | `lib/parser/program.ts`, re-exported from `lib/parser/index.ts` | Yes |
+| An empty `programs.allowed` / `partsOff.parts` filters nothing and is never relaxed | The program card defaults to "Bắt buộc" with nothing chosen, and a requirement that cannot reject anything must not be reported as violated or relaxed. Guarded in two places: `violates` (for direct callers and the equivalence key) and `constraintsWithMode` via `isActive`. The Phase 3 constraints keep their old behavior, so all 346 earlier tests are untouched | `solver/filter.ts:isActive`, `violates` | Yes |
+| App default `programs: "required"` with `allowed: []`; solver `DEFAULT_PREFERENCES` still all off | Same split as `freeSeats` in Phase 4: the solver stays neutral for tests, the app shows the mode the student needs. Harmless because of the rule above | `app/state.ts:defaultPrefs` | Yes |
+| The program track is part of the equivalence key; `daysOff` / `partsOff` are not | Two groups can share every slot and differ only in program (the Phase 7 test derives one from CO2011:CC01), so collapsing them would hide a filtered group. Day and half-day violations follow from the sessions, which the key already serializes | `solver/equivalence.ts:equivalenceKey`, mirrored in `tests/solver.test.ts:referenceCollapse` | Yes |
+| `course-no-program` is its own diagnostic, alongside `course-blocked` for the other blockers | "No group meets the required Chương trình" does not say what to do; naming the programs the course *does* have (SK2001: only A and CC) does, and it is what the "Bỏ lọc chương trình" button hangs on | `solver/solve.ts:explainRequired`, `components/StatusBanner.tsx` | Yes |
+| "Cả ngày" and the three parts stay two constraints | `daysOff` keeps its Phase 3 meaning and its own storage; the card only shares a mode. Picking all three parts is not rewritten into "Cả ngày" (the prompt's rule), and "Cả ngày" disables but never clears the parts, so unticking it restores the user's choice | `components/PreferencesForm.tsx:DayPartGrid`, `solver/filter.ts` | Yes |
+| An unknown paste age counts as stale | `pastedAt: null` only comes from a save written before Phase 7, so the data is at least one session old; the banner is a warning, never a block, and claiming freshness we cannot verify is the worse error | `view/format.ts:isStalePaste` | Yes |
+| The clock is a parameter everywhere (`now`), held in `App` state and ticked every 30 s | Keeps `formatAge` / `isStalePaste` / `staleCourses` pure and their tests deterministic; the reducer takes the timestamp on the `addPaste` action instead of reading `Date.now()` | `App.tsx` (`CLOCK_MS`), `app/state.ts`, `app/pastes.ts` | Yes |
 | Structured codes + Vietnamese templates with English fallback | Libraries stay language-neutral; unknown codes or bad params never show "undefined" | `lib/*/types.ts`, `app/messages.ts` | Yes |
 | Print = the same tokens swapped to Catppuccin Latte | Every utility switches to light colors with no second set of classes | `src/index.css` `@media print` | Yes |
 | `ctp-` token prefix | Avoids clashes like `text-base` (Tailwind font size) vs `base` (color) | `src/index.css` `@theme` | Costly (touches every class) |
@@ -385,18 +411,18 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 - An edge case is *derived* from a real fixture by a minimal, commented edit inside the test. Examples: `editLine(CO2007, 7, …)`; `withoutGroup(CO2007, "A01_A02")`; moving L04_L08's lab onto L04_L07's slot to create equivalent groups.
 - If an expected value contradicts the fixture, fix the test, not the parser.
 
-**Current counts** (`npx vitest run --reporter=verbose`, 2026-09-23): 346 tests in 16 files, ≈ 15 s.
+**Current counts** (`npx vitest run --reporter=verbose`, 2026-09-23): 395 tests in 16 files, ≈ 16 s.
 
 | File | Tests | File | Tests |
 |---|---|---|---|
-| contrast.test.ts | 101 | app.smoke.test.tsx | 11 |
+| contrast.test.ts | 101 | app.smoke.test.tsx | 15 |
+| solver.test.ts | 69 | ics.test.ts | 12 |
 | parser.test.ts | 48 | grid.test.ts | 11 |
-| solver.test.ts | 47 | shortterm.test.ts | 10 |
-| state.test.ts | 42 | format.test.ts | 7 |
-| timing.test.ts | 32 | storage.test.ts | 6 |
-| ics.test.ts | 12 | messages.test.ts / perf.test.ts | 5 / 5 |
-| protocol.test.ts | 4 | image.test.ts | 3 |
-| summary.test.ts | 2 | | |
+| state.test.ts | 42 | shortterm.test.ts | 10 |
+| timing.test.ts | 32 | storage.test.ts | 9 |
+| format.test.ts | 19 | messages.test.ts | 8 |
+| summary.test.ts / perf.test.ts | 6 / 6 | protocol.test.ts | 4 |
+| image.test.ts | 3 | | |
 
 **Commands** (all verified; the same in PowerShell 5.1 and bash unless noted):
 ```bash
@@ -432,19 +458,24 @@ Production check, both shells: `npm run build`, then `npm run preview` → http:
 1. app defaults;
 2. every weight at 10, `freeSeats` off, `timeOfDay` afternoon;
 3. `campuses` required [1] + `daysOff` required [Thứ 2];
-4. `freeSeats` required.
+4. `freeSeats` required;
+5. `programs` required [CC] (Phase 7 — CC is the only program every fixture has).
 
 | Config | Status | Nodes | Nodes without equivalence | Bundled Node 24 | Vitest | Old solver (bundled) | Truncated |
 |---|---|---|---|---|---|---|---|
-| (1) | ok | 2,778,034 | 4,389,422 | 377 ms | 310–463 ms | 5,520 ms | no |
-| (2) | ok | 2,778,034 | 4,389,422 | 383 ms | 415–459 ms | 5,657 ms | no |
-| (3) | ok | 44,104 | 78,043 | 7 ms | 9–13 ms | 72 ms | no |
-| (4) | ok | 100,372 | 109,389 | 23 ms | 24–36 ms | 131 ms | no |
+| (1) | ok | 2,778,034 | 4,389,422 | 377 ms | 273–288 ms | 5,520 ms | no |
+| (2) | ok | 2,778,034 | 4,389,422 | 383 ms | 381–434 ms | 5,657 ms | no |
+| (3) | ok | 44,104 | 78,043 | 7 ms | 9–12 ms | 72 ms | no |
+| (4) | ok | 100,372 | 109,389 | 23 ms | 26–28 ms | 131 ms | no |
+| (5) | ok | 50,704 | 76,576 | not measured | 10–14 ms | n/a | no |
+
+Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1)–(4) are unchanged from Phase 6 within noise, and their node counts are bit-identical, which is what pins the Phase 7 constraints as behavior-preserving when they are off. The "bundled Node" and "old solver" columns were not re-measured in Phase 7.
 
 - **Browser:** the production build under `vite preview` at `/tkb_web/`, config (1): solver 306–313 ms, round trip 313–318 ms over 3 runs (headless Chrome, Windows 11).
 - **Equivalence classes per course** (groups → classes):
   - (3): CO2001 3→3, CO2003 5→5, CO2007 6→6, CO2011 7→7, SK2001 58→36, SP1031 11→10;
-  - (4): CO2001 3→3, CO2003 6→6, CO2007 14→14, CO2011 9→9, SK2001 15→11, SP1031 14→13.
+  - (4): CO2001 3→3, CO2003 6→6, CO2007 14→14, CO2011 9→9, SK2001 15→11, SP1031 14→13;
+  - (5): CO2001 2→2, CO2003 7→7, CO2007 7→7, CO2011 5→5, SK2001 60→39, SP1031 9→9.
 - **"Old solver"** = the Phase 5 code (a full 30×7 rescan per leaf), bundled and run side by side. `identical=true` for all four: same schedules, penalties, breakdowns, diagnostics and node counts.
 - **Why vitest looks slower:** its SSR transform turns imported constants into getters, which is expensive in hot loops. `score.ts` copies them into module-level locals (`DAYS_PER_WEEK`, `IDLE_NORM`, …).
 
@@ -496,14 +527,19 @@ Production check, both shells: `npm run build`, then `npm run preview` → http:
 - **Clipboard on Windows** turns `\n` into `\r\n` on copy (harmless).
 - **The `docs/user-testing.md` table is empty.**
 
-**Where SPEC.md disagrees with the code** (the code is the truth; SPEC was not edited in this handover):
+**Phase 7 limitations:**
+- **The evening bucket (tiết 13–16) is untested against real data.** No fixture group teaches after tiết 12, so "Tối" can only be exercised by construction (`tests/solver.test.ts` proves it filters nothing on the fixtures).
+- **A program prefix is only as good as the group id.** A course whose ids do not start with a letter gives `programOf` `""`, which is shown as "Khác" and offered in the card as `? — Khác (n nhóm)`. No fixture does this.
+- **The program card lists only the programs of the pasted courses**, so a student who pastes one course sees only that course's programs. That is intended, but it means the card changes as courses are added.
+- **`pastedAt` is not re-checked against the registration page.** The 30-minute threshold is a guess at how fast seat counts move; the banner never blocks anything.
+- **The clock ticks every 30 s** (`CLOCK_MS` in `App.tsx`), so "Dán 12 phút trước" can be up to 30 s stale on screen.
+
+**Where SPEC.md disagrees with the code** (the code is the truth; SPEC §7 was rewritten in Phase 7):
 - **§5:**
   - "localStorage (`tkb:v1`) keeps only the raw pastes and the preferences". It now also stores `autoLocked`, `registered` and `semesterStart`.
   - "`useSolver` … reports progress". There is no progress reporting: the worker sends one response per request.
 - **§6:** `ParseWarning { line; text; message; }`. The code adds `code` and `params`.
-- **§7:**
-  - It lists "include/exclude lecturer" and "lock / exclude a specific group" as user-selectable Required/Preferred.
-  - The code has only `avoidLecturers` (exclude). Lock and exclude are always hard and never "preferred".
+- **§7:** rewritten in Phase 7; it now matches the code, including that lock / exclude are always hard and that only `avoidLecturers` (exclude) exists.
 - **§8:**
   - "keep top-K in a min-heap": the code keeps a sorted array (`TopK` in `search.ts`, K = 5).
   - "Order courses by ascending number of remaining groups (MRV)": the code orders by number of equivalence *classes*.

@@ -39,13 +39,17 @@ function objectOr(value: unknown): Record<string, unknown> {
   return isObject(value) ? value : {};
 }
 
-/** Keeps well-formed { code, raw } entries; a repeated code replaces the earlier entry in place. */
+/**
+ * Keeps well-formed { code, raw } entries; a repeated code replaces the earlier
+ * entry in place. A save made before paste timestamps existed has no
+ * `pastedAt`, and loads as null ("không rõ thời điểm").
+ */
 function readPastes(value: unknown): Paste[] {
   if (!Array.isArray(value)) return [];
   const byCode = new Map<string, Paste>();
   for (const item of value) {
     if (isObject(item) && typeof item.code === "string" && typeof item.raw === "string") {
-      byCode.set(item.code, { code: item.code, raw: item.raw });
+      byCode.set(item.code, { code: item.code, raw: item.raw, pastedAt: typeof item.pastedAt === "string" ? item.pastedAt : null });
     }
   }
   return [...byCode.values()];
@@ -61,8 +65,10 @@ function readPrefs(value: unknown): Preferences {
   const w = objectOr(s.weights);
   const merged = {
     ...d,
+    programs: { ...d.programs, ...objectOr(s.programs) },
     campuses: { ...d.campuses, ...objectOr(s.campuses) },
     daysOff: { ...d.daysOff, ...objectOr(s.daysOff) },
+    partsOff: { ...d.partsOff, ...objectOr(s.partsOff) },
     language: { ...d.language, ...objectOr(s.language) },
     freeSeats: { ...d.freeSeats, ...objectOr(s.freeSeats) },
     avoidLecturers: { ...d.avoidLecturers, ...objectOr(s.avoidLecturers) },

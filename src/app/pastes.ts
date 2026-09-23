@@ -4,6 +4,8 @@ import { parse, type Course, type ParseWarning } from "../lib/parser";
 export interface Paste {
   code: string;
   raw: string;
+  /** When this block was pasted, ISO; null for a save made before it was stored. */
+  pastedAt: string | null;
 }
 
 /** A paste after parsing. `course` is null only if the text no longer contains that course. */
@@ -11,6 +13,7 @@ export interface ParsedPaste {
   code: string;
   course: Course | null;
   warnings: ParseWarning[];
+  pastedAt: string | null;
 }
 
 // Same line shapes the parser recognizes (see src/lib/parser/README.md).
@@ -27,8 +30,9 @@ function clean(line: string): string {
  * replaced and re-parsed on its own. A block starts at its summary lines
  * ("STT ..." / "1  CO2007 ...") right above the course header; the first block
  * also keeps anything before it, so stray lines still produce warnings.
+ * `pastedAt` is passed in (the caller reads the clock), so this stays pure.
  */
-export function splitByCourse(raw: string): Paste[] {
+export function splitByCourse(raw: string, pastedAt: string | null = null): Paste[] {
   const lines = raw.normalize("NFC").split(/\r\n|\r|\n/);
   const cleaned = lines.map(clean);
   const headers = cleaned.flatMap((line, index) => {
@@ -48,6 +52,7 @@ export function splitByCourse(raw: string): Paste[] {
   return headers.map((header, k) => ({
     code: header.code,
     raw: lines.slice(starts[k], starts[k + 1] ?? lines.length).join("\n").trimEnd(),
+    pastedAt,
   }));
 }
 
@@ -78,6 +83,7 @@ export function parsePaste(paste: Paste): ParsedPaste {
     code: paste.code,
     course: result.courses.findLast((c) => c.code === paste.code) ?? null,
     warnings: result.warnings,
+    pastedAt: paste.pastedAt ?? null,
   };
 }
 

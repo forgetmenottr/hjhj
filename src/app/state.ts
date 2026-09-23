@@ -65,7 +65,7 @@ export interface AppState {
 }
 
 export type Action =
-  | { type: "addPaste"; raw: string }
+  | { type: "addPaste"; raw: string; at?: string }
   | { type: "removeCourse"; code: string }
   | { type: "setPrefs"; prefs: Preferences }
   | { type: "resetPrefs" }
@@ -89,11 +89,14 @@ export type Action =
 
 /**
  * App defaults: the solver's defaults, plus "Còn chỗ trống" as a preference so
- * the first suggestions avoid groups that are already full.
+ * the first suggestions avoid groups that are already full, and the program
+ * card set to "Bắt buộc" with nothing chosen (which filters nothing until the
+ * user picks a program).
  */
 export function defaultPrefs(): Preferences {
   const prefs = structuredClone(DEFAULT_PREFERENCES);
   prefs.freeSeats.mode = "preferred";
+  prefs.programs.mode = "required";
   return prefs;
 }
 
@@ -203,7 +206,8 @@ function isCurrent(state: AppState, id: number): boolean {
 export function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "addPaste": {
-      const incoming = splitByCourse(action.raw);
+      // The caller reads the clock; without it the blocks keep an unknown age.
+      const incoming = splitByCourse(action.raw, action.at ?? null);
       if (incoming.length === 0) return { ...state, notice: { added: [], replaced: [], empty: true } };
       const { pastes, added, replaced } = mergePastes(state.pastes, incoming);
       return withPastes(state, pastes, { notice: { added, replaced, empty: false } });

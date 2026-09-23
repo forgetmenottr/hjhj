@@ -2,9 +2,9 @@ import { useId, useState } from "react";
 import { parseWarningText } from "../app/messages";
 import type { ParsedPaste } from "../app/pastes";
 import type { Group } from "../lib/parser";
-import { formatCredits, formatSession, isFull } from "../lib/view/format";
+import { formatCredits, formatSession, isFull, programBadge } from "../lib/view/format";
 import { courseColor } from "./courseColor";
-import { AlertIcon, Badge, BanIcon, ChevronIcon, LockIcon, ToggleButton, UnlockIcon } from "./ui";
+import { AlertIcon, Badge, BanIcon, ChevronIcon, LockIcon, PasteAge, ToggleButton, UnlockIcon } from "./ui";
 
 /** Lock (true) or unlock (false) a group. */
 type ToggleLock = (courseCode: string, groupId: string, lock: boolean) => void;
@@ -14,11 +14,14 @@ export function CoursePreview({
   courses,
   locked,
   excluded,
+  now,
   onToggleLock,
 }: {
   courses: ParsedPaste[];
   locked: Record<string, string>;
   excluded: string[];
+  /** Clock of the render, for the "Dán … trước" line (never read inside the helpers). */
+  now: number;
   onToggleLock: ToggleLock;
 }) {
   return (
@@ -35,6 +38,7 @@ export function CoursePreview({
           defaultOpen={index === 0}
           lockedId={locked[paste.code]}
           excluded={excluded}
+          now={now}
           onToggleLock={onToggleLock}
         />
       ))}
@@ -48,6 +52,7 @@ function CourseCard({
   defaultOpen,
   lockedId,
   excluded,
+  now,
   onToggleLock,
 }: {
   paste: ParsedPaste;
@@ -55,6 +60,7 @@ function CourseCard({
   defaultOpen: boolean;
   lockedId: string | undefined;
   excluded: string[];
+  now: number;
   onToggleLock: ToggleLock;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -81,6 +87,7 @@ function CourseCard({
               {course && <Badge>{formatCredits(course.credits)}</Badge>}
               <Badge tone={groups.length > 0 ? "neutral" : "red"}>{groups.length} nhóm</Badge>
               {paste.warnings.length > 0 && <Badge tone="yellow">{paste.warnings.length} cảnh báo</Badge>}
+              <PasteAge pastedAt={paste.pastedAt} now={now} />
               {lockedId !== undefined && (
                 <Badge tone="mauve">
                   <LockIcon className="size-3.5" />
@@ -150,6 +157,7 @@ function GroupRow({
     <li className="py-3" data-group={group.id}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-mono font-semibold">{group.id}</span>
+        <Badge tone="mauve">{programBadge(group)}</Badge>
         <span className="text-sm">
           <span className="text-ctp-subtext">DK/Sĩ số </span>
           {group.registered}/{group.capacity}

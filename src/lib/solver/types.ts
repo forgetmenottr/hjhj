@@ -5,14 +5,32 @@ import { DEFAULT_MAX_NODES, DEFAULT_TOP_K, MAX_WEIGHT } from "./constants";
 export type Mode = "off" | "required" | "preferred";
 
 /** Names of the group-level constraints, in a fixed order. */
-export const CONSTRAINTS = ["campuses", "daysOff", "language", "freeSeats", "avoidLecturers"] as const;
+export const CONSTRAINTS = ["programs", "campuses", "daysOff", "partsOff", "language", "freeSeats", "avoidLecturers"] as const;
 export type ConstraintName = (typeof CONSTRAINTS)[number];
 
+/** The three parts of a day (see DAY_PARTS for the periods of each). */
+export const DAY_PART_NAMES = ["morning", "afternoon", "evening"] as const;
+export type DayPart = (typeof DAY_PART_NAMES)[number];
+
+/** Half a day off, e.g. { day: 2, part: "morning" } = Thứ 2 sáng. */
+export interface DayPartOff {
+  day: Day;
+  part: DayPart;
+}
+
 export interface Preferences {
+  /**
+   * Program track of the group (the leading letters of its theory group; see
+   * `programOf`). An EMPTY list means "not chosen yet" and filters nothing,
+   * whatever the mode.
+   */
+  programs: { mode: Mode; allowed: string[] };
   /** Every session of the group must be on an allowed campus. */
   campuses: { mode: Mode; allowed: (1 | 2)[] };
-  /** The group has no session on these days. */
+  /** The group has no session on these days (whole days). */
   daysOff: { mode: Mode; days: Day[] };
+  /** The group has no session in these half-days. An empty list filters nothing. */
+  partsOff: { mode: Mode; parts: DayPartOff[] };
   /** e.g. ["V"] or ["TA"]. */
   language: { mode: Mode; allowed: string[] };
   /** registered < capacity. */
@@ -41,8 +59,10 @@ export interface Preferences {
 
 /** Defaults: no constraints, mild preference for compact, few, non-early days. Treat as read-only. */
 export const DEFAULT_PREFERENCES: Preferences = {
+  programs: { mode: "off", allowed: [] },
   campuses: { mode: "off", allowed: [1, 2] },
   daysOff: { mode: "off", days: [] },
+  partsOff: { mode: "off", parts: [] },
   language: { mode: "off", allowed: ["V", "TA"] },
   freeSeats: { mode: "off" },
   avoidLecturers: { mode: "off", names: [] },
@@ -95,6 +115,7 @@ export const SOLVER_DIAGNOSTIC_CODES = [
   "course-blocked",
   "course-blocked-combined",
   "no-combination-required",
+  "course-no-program",
   "relaxed",
   "course-no-groups",
   "all-excluded",
@@ -152,6 +173,25 @@ const isCampus = (x: unknown): x is 1 | 2 => x === 1 || x === 2;
 const isDay = (x: unknown): x is Day => typeof x === "number" && Number.isInteger(x) && x >= 2 && x <= 8;
 const isString = (x: unknown): x is string => typeof x === "string";
 
+function isPartOff(x: unknown): x is DayPartOff {
+  const item = x as Partial<DayPartOff> | null;
+  return typeof item === "object" && item !== null && isDay(item.day) && DAY_PART_NAMES.includes(item.part as DayPart);
+}
+
+/** Well-formed half-days, without duplicates, ordered by day then morning → evening. */
+function partsOff(value: unknown): DayPartOff[] {
+  const seen = new Set<string>();
+  const parts = list(value, isPartOff).filter((p) => {
+    const key = `${p.day}:${p.part}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return parts
+    .map((p) => ({ day: p.day, part: p.part }))
+    .sort((a, b) => a.day - b.day || DAY_PART_NAMES.indexOf(a.part) - DAY_PART_NAMES.indexOf(b.part));
+}
+
 /** Returns well-formed preferences: unknown modes → "off", weights clamped to 0..10, bad lists → []. */
 export function normalizePreferences(input: Preferences): Preferences {
   const p = (input && typeof input === "object" ? input : {}) as Partial<Preferences>;
@@ -159,8 +199,10 @@ export function normalizePreferences(input: Preferences): Preferences {
   const prefer = w.timeOfDay?.prefer;
   const locked = p.locked && typeof p.locked === "object" ? p.locked : {};
   return {
+    programs: { mode: mode(p.programs?.mode), allowed: list(p.programs?.allowed, isString) },
     campuses: { mode: mode(p.campuses?.mode), allowed: list(p.campuses?.allowed, isCampus) },
     daysOff: { mode: mode(p.daysOff?.mode), days: list(p.daysOff?.days, isDay) },
+    partsOff: { mode: mode(p.partsOff?.mode), parts: partsOff(p.partsOff?.parts) },
     language: { mode: mode(p.language?.mode), allowed: list(p.language?.allowed, isString) },
     freeSeats: { mode: mode(p.freeSeats?.mode) },
     avoidLecturers: { mode: mode(p.avoidLecturers?.mode), names: list(p.avoidLecturers?.names, isString) },

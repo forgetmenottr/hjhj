@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Pick, Schedule } from "../lib/solver";
-import { groupIdOf, isFull, itemLabel } from "../lib/view/format";
+import { groupIdOf, isFull, itemLabel, programBadge } from "../lib/view/format";
 import { relaxedViolations } from "../lib/view/summary";
 import { courseColor } from "./courseColor";
 import { Badge, Button, Card, InfoIcon, LockIcon, ToggleButton, UnlockIcon } from "./ui";
@@ -106,6 +106,7 @@ function PickRow({
             {group.registered}/{group.capacity}
           </span>
           {isFull(group) && <Badge tone="red">Đầy</Badge>}
+          <Badge tone="mauve">{programBadge(group)}</Badge>
           <Badge tone={group.language === "TA" ? "blue" : "neutral"}>{group.language}</Badge>
           {isLocked && (
             <Badge tone="mauve">

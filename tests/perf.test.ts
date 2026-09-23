@@ -35,6 +35,8 @@ const CASES: [string, Preferences][] = [
     }),
   ],
   ["free seats required", prefs((p) => void (p.freeSeats.mode = "required"))],
+  // CC is the only program every fixture has (SK2001 has no L and no TN group).
+  ["programs required [CC]", prefs((p) => { p.programs = { mode: "required", allowed: ["CC"] }; })],
 ];
 
 describe(`solver on all ${ALL_FIXTURES.length} real fixtures (sanity check)`, () => {

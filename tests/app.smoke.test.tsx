@@ -39,10 +39,32 @@ const { default: App } = await import("../src/App");
 const CO2007 = readFixture("CO2007.txt");
 const CO2011 = readFixture("CO2011.txt");
 
+/** Course blocks pasted just now, so they are not stale (see STALE_PASTE_MS). */
+const fresh = (text: string) => splitByCourse(text, new Date().toISOString());
+
 /** Starts the app with both fixtures already pasted (as a previous visit would have saved them). */
-function preload(prefs: Preferences = defaultPrefs(), autoLocked: string[] = [], pastes = splitByCourse(`${CO2007}\n${CO2011}`)) {
+function preload(prefs: Preferences = defaultPrefs(), autoLocked: string[] = [], pastes = fresh(`${CO2007}\n${CO2011}`)) {
   localStorage.setItem("tkb:v1", JSON.stringify({ pastes, prefs, autoLocked }));
   return render(<App />);
+}
+
+/** The card of one constraint in step 3, by its heading. */
+function card(name: string): HTMLElement {
+  return screen.getByRole("heading", { name }).closest("section")!;
+}
+
+/** Sets a constraint card to Tắt / Bắt buộc / Ưu tiên. */
+async function setMode(user: UserEvent, name: string, mode: string) {
+  await user.click(within(card(name)).getByRole("radio", { name: mode }));
+}
+
+/** Sessions of the groups picked on screen, read from the fixtures. */
+function pickedSessions(container: HTMLElement, sources: Record<string, string>) {
+  return pickKeys(container).flatMap((key) => {
+    const [code, id] = key.split(":");
+    const course = parse(sources[code]).courses.find((c) => c.code === code)!;
+    return course.groups.find((g) => g.id === id)!.sessions;
+  });
 }
 
 async function toResults(user: UserEvent) {
@@ -164,7 +186,7 @@ describe("app smoke test", () => {
     const prefs = defaultPrefs();
     prefs.excluded = parse(derived).courses[0].groups.flatMap((g) => (g.id.startsWith("L04_") ? [] : [`CO2007:${g.id}`]));
     const user = userEvent.setup();
-    const { container } = preload(prefs, [], splitByCourse(`${derived}\n${CO2011}`));
+    const { container } = preload(prefs, [], fresh(`${derived}\n${CO2011}`));
     await toResults(user);
 
     const row = pick(container, "CO2007:L04_L07");
@@ -327,7 +349,7 @@ describe("app smoke test", () => {
   it("a schedule with SK2001 shows its 5-week label in the all-weeks view", async () => {
     const SK2001 = readFixture("SK2001.txt");
     const user = userEvent.setup();
-    const { container } = preload(defaultPrefs(), [], splitByCourse(`${CO2007}\n${CO2011}\n${SK2001}`));
+    const { container } = preload(defaultPrefs(), [], fresh(`${CO2007}\n${CO2011}\n${SK2001}`));
     await toResults(user);
     const key = pickKeys(container).find((k) => k.startsWith("SK2001:"))!;
     const group = parse(SK2001).courses[0].groups.find((g) => g.id === key.split(":")[1])!;
@@ -336,5 +358,124 @@ describe("app smoke test", () => {
     expect(screen.getByRole("button", { name: "Tất cả" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getAllByText(label).length).toBeGreaterThan(0); // on the grid block
     expect(screen.getByText(`· ${label}`)).toBeTruthy(); // in the day list
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 7: program track, half-day off, paste timestamps
+  // -------------------------------------------------------------------------
+
+  it("choosing the program L in step 3 makes every pick an L group", async () => {
+    const user = userEvent.setup();
+    const { container } = preload();
+    await user.click(screen.getByRole("button", { name: "Tiếp" }));
+    await user.click(screen.getByRole("button", { name: "Tiếp" }));
+
+    // The program card comes first and is already on "Bắt buộc" with nothing chosen.
+    expect(screen.getByText("Bước đầu tiên: chọn chương trình của bạn")).toBeTruthy();
+    const programs = card("Chương trình");
+    expect(within(programs).getByRole<HTMLInputElement>("radio", { name: "Bắt buộc" }).checked).toBe(true);
+    expect(within(programs).getByText("Chưa chọn chương trình nào — mọi nhóm đều được xét.")).toBeTruthy();
+    // Only the programs present in CO2007 + CO2011 are offered, with their group counts.
+    expect(within(programs).getAllByRole("checkbox").map((el) => el.parentElement!.textContent)).toEqual([
+      "L — đại trà (11 nhóm)",
+      "A — Tiếng Nhật / Việt-Pháp (3 nhóm)",
+      "CC — chất lượng cao (12 nhóm)",
+      "TN — tài năng (2 nhóm)",
+    ]);
+
+    await user.click(within(programs).getByRole("checkbox", { name: /^L — đại trà/ }));
+    expect(JSON.parse(localStorage.getItem("tkb:v1")!).prefs.programs).toEqual({ mode: "required", allowed: ["L"] });
+
+    await user.click(screen.getByRole("button", { name: "Xếp lịch" }));
+    expect(screen.getByRole("heading", { name: "Bước 4: Kết quả" })).toBeTruthy();
+    const keys = pickKeys(container);
+    expect(keys).toHaveLength(2);
+    for (const key of keys) expect(key.split(":")[1].startsWith("L"), key).toBe(true);
+    expect(within(pick(container, keys[0])).getByText("L · đại trà")).toBeTruthy();
+  });
+
+  it("a course with no group in the chosen program is named, and “Bỏ lọc chương trình” fixes it", async () => {
+    const SK2001 = readFixture("SK2001.txt");
+    const prefs = defaultPrefs();
+    prefs.programs = { mode: "required", allowed: ["L"] };
+    const user = userEvent.setup();
+    const { container } = preload(prefs, [], fresh(`${CO2007}\n${CO2011}\n${SK2001}`));
+    await toResults(user);
+
+    // SK2001 only has A and CC groups, so the requirement had to be relaxed.
+    expect(
+      screen.getByText(
+        "SK2001: không có nhóm nào thuộc chương trình bắt buộc (L (đại trà)); môn này chỉ có A (Tiếng Nhật / Việt-Pháp), CC (chất lượng cao).",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Không thể đáp ứng mọi yêu cầu bắt buộc cùng lúc.")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /Bỏ lọc chương trình/ }));
+    await settled(container);
+    expect(screen.getByText(/^Tìm được \d+ lịch/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Bỏ lọc chương trình/ })).toBeNull();
+    // Only the mode changed; the chosen program is still remembered.
+    expect(JSON.parse(localStorage.getItem("tkb:v1")!).prefs.programs).toEqual({ mode: "off", allowed: ["L"] });
+    expect(pickKeys(container)).toHaveLength(3);
+  });
+
+  it("“Sáng T2” leaves no pick with a Monday morning session, and “Cả ngày” disables the three parts", async () => {
+    const user = userEvent.setup();
+    const { container } = preload();
+    await user.click(screen.getByRole("button", { name: "Tiếp" }));
+    await user.click(screen.getByRole("button", { name: "Tiếp" }));
+
+    const days = card("Ngày và buổi nghỉ");
+    await setMode(user, "Ngày và buổi nghỉ", "Bắt buộc");
+    const morningMonday = within(days).getByRole("button", { name: "Nghỉ sáng T2 (tiết 1–6)" });
+    await user.click(morningMonday);
+    expect(morningMonday.getAttribute("aria-pressed")).toBe("true");
+
+    const saved = JSON.parse(localStorage.getItem("tkb:v1")!).prefs;
+    expect(saved.partsOff).toEqual({ mode: "required", parts: [{ day: 2, part: "morning" }] });
+    expect(saved.daysOff.days).toEqual([]); // a half-day is not a whole day
+
+    await user.click(screen.getByRole("button", { name: "Xếp lịch" }));
+    const sessions = pickedSessions(container, { CO2007, CO2011 });
+    expect(sessions.length).toBeGreaterThan(0);
+    expect(sessions.some((s) => s.day === 2 && s.periods.some((n) => n <= 6))).toBe(false);
+
+    // "Cả ngày" on Thứ 2 covers the three parts, which are then disabled but keep their value.
+    await user.click(screen.getByRole("button", { name: "Quay lại" }));
+    await user.click(within(card("Ngày và buổi nghỉ")).getByRole("button", { name: "Nghỉ cả ngày T2" }));
+    const parts = ["Nghỉ sáng T2 (tiết 1–6)", "Nghỉ chiều T2 (tiết 7–12)", "Nghỉ tối T2 (tiết 13–16)"];
+    for (const name of parts) {
+      const button = within(card("Ngày và buổi nghỉ")).getByRole("button", { name });
+      expect(button.hasAttribute("disabled"), name).toBe(true);
+    }
+    const kept = JSON.parse(localStorage.getItem("tkb:v1")!).prefs;
+    expect(kept.daysOff.days).toEqual([2]);
+    expect(kept.partsOff.parts).toEqual([{ day: 2, part: "morning" }]); // not rewritten
+  });
+
+  it("shows how long ago each course was pasted, and warns in step 4 when it is old", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const box = screen.getByLabelText("Nội dung đã copy");
+    await user.click(box);
+    await user.paste(CO2007);
+    await user.click(screen.getByRole("button", { name: "Thêm môn" }));
+    expect(screen.getByText("Dán vừa xong")).toBeTruthy();
+    expect(screen.queryByText(/nên dán lại/)).toBeNull();
+    cleanup();
+
+    // A save written 2 hours ago, and one from before timestamps existed.
+    const old = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const pastes = [...splitByCourse(CO2007, old), ...splitByCourse(CO2011).map((p) => ({ code: p.code, raw: p.raw }))];
+    localStorage.setItem("tkb:v1", JSON.stringify({ pastes, prefs: defaultPrefs(), autoLocked: [] }));
+    render(<App />);
+    expect(screen.getByText(/^Dán 2 giờ trước/)).toBeTruthy();
+    expect(screen.getByText(/^Dán · không rõ thời điểm/)).toBeTruthy();
+
+    await toResults(user);
+    expect(screen.getByText("Số chỗ trống có thể đã thay đổi — nên dán lại dữ liệu trước khi đăng ký.")).toBeTruthy();
+    expect(screen.getByText("CO2007, CO2011")).toBeTruthy();
+    // It is a warning, not a block: the schedules are still there.
+    expect(screen.getAllByRole("tab")).toHaveLength(5);
   });
 });

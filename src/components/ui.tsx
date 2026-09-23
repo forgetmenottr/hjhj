@@ -1,5 +1,6 @@
 // Small shared building blocks: buttons, cards, badges, icons.
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { formatAge, isStalePaste } from "../lib/view/format";
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
@@ -63,6 +64,24 @@ export function Badge({ children, tone = "neutral" }: { children: ReactNode; ton
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap ${TONES[tone]}`}>
       {children}
     </span>
+  );
+}
+
+/**
+ * When a course block was pasted: "Dán 12 phút trước". Data older than
+ * STALE_PASTE_MS (or of unknown age) is shown in the warning tone with a
+ * "dán lại" hint, because the seat counts in it may have changed.
+ */
+export function PasteAge({ pastedAt, now }: { pastedAt: string | null; now: number }) {
+  const stale = isStalePaste(pastedAt, now);
+  const age = formatAge(pastedAt, now);
+  const text = pastedAt === null ? `Dán · ${age}` : `Dán ${age}`;
+  return (
+    <Badge tone={stale ? "yellow" : "neutral"}>
+      {stale && <AlertIcon className="size-3.5" />}
+      {text}
+      {stale && " · nên dán lại"}
+    </Badge>
   );
 }
 

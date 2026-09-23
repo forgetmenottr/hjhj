@@ -91,7 +91,7 @@ describe("splitByCourse", () => {
   it("merges: same code replaced in place, new code appended", () => {
     const first = mergePastes([], splitByCourse(`${CO2007}\n${CO2011}`));
     expect(first).toMatchObject({ added: ["CO2007", "CO2011"], replaced: [] });
-    const again = mergePastes(first.pastes, [{ code: "CO2007", raw: "new" }]);
+    const again = mergePastes(first.pastes, [{ code: "CO2007", raw: "new", pastedAt: null }]);
     expect(again.pastes.map((p) => [p.code, p.raw === "new"])).toEqual([["CO2007", true], ["CO2011", false]]);
     expect(again).toMatchObject({ added: [], replaced: ["CO2007"] });
   });

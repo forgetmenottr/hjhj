@@ -19,7 +19,8 @@ export function compareStrings(a: string, b: string): number {
 /**
  * Two groups of a course are equivalent when every score and constraint sees
  * them the same: identical mask words, identical sessions including campus,
- * same language, same free-seats status and same lecturer-avoid status.
+ * same language, same program track, same free-seats status and same
+ * lecturer-avoid status. (`daysOff` and `partsOff` follow from the sessions.)
  */
 export function equivalenceKey(g: IndexedGroup, prefs: Preferences): string {
   const sessions = g.group.sessions
@@ -30,6 +31,7 @@ export function equivalenceKey(g: IndexedGroup, prefs: Preferences): string {
     Array.from(g.mask).join(","),
     sessions,
     g.group.language,
+    violates("programs", g.group, prefs),
     violates("freeSeats", g.group, prefs),
     violates("avoidLecturers", g.group, prefs),
   ].join("#");

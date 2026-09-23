@@ -50,11 +50,43 @@ describe("storage", () => {
   it("keeps defaults for fields an older or partial copy lacks", () => {
     const stored = { pastes: [{ code: "CO2007", raw: "x" }, { code: 5 }, "junk"], prefs: { weights: { fewerDays: 9 }, locked: { CO2007: "A01_A01" } } };
     const loaded = loadSaved(memoryStorage({ [STORAGE_KEY]: JSON.stringify(stored) }));
-    expect(loaded.pastes).toEqual([{ code: "CO2007", raw: "x" }]);
+    expect(loaded.pastes).toEqual([{ code: "CO2007", raw: "x", pastedAt: null }]);
     const expected = defaultPrefs();
     expected.weights.fewerDays = 9;
     expect(loaded.prefs).toEqual(expected); // the lock is dropped: "x" has no group A01_A01
     expect(loaded).toMatchObject({ autoLocked: [], registered: [], semesterStart: null });
+  });
+
+  it("migrates a save written before paste timestamps: pastedAt becomes null", () => {
+    // Exactly what Phase 6 wrote: { code, raw } with no pastedAt.
+    const old = { pastes: PASTES.map(({ code, raw }) => ({ code, raw })), prefs: {}, autoLocked: [], registered: [], semesterStart: null };
+    const loaded = loadSaved(memoryStorage({ [STORAGE_KEY]: JSON.stringify(old) }));
+    expect(loaded.pastes.map((p) => p.code)).toEqual(PASTES.map((p) => p.code));
+    expect(loaded.pastes.map((p) => p.pastedAt)).toEqual(PASTES.map(() => null));
+    expect(loaded.pastes.map((p) => p.raw)).toEqual(PASTES.map((p) => p.raw));
+    // An unreadable value is dropped the same way; a real one is kept.
+    const mixed = { pastes: [{ code: "CO2007", raw: "x", pastedAt: 1234 }, { code: "CO2011", raw: "y", pastedAt: "2026-09-23T04:00:00.000Z" }] };
+    const both = loadSaved(memoryStorage({ [STORAGE_KEY]: JSON.stringify(mixed) })).pastes;
+    expect(both.map((p) => p.pastedAt)).toEqual([null, "2026-09-23T04:00:00.000Z"]);
+  });
+
+  it("round-trips the new program and half-day-off requirements", () => {
+    const storage = memoryStorage();
+    const prefs = defaultPrefs();
+    prefs.programs = { mode: "required", allowed: ["L"] };
+    prefs.partsOff = { mode: "preferred", parts: [{ day: 2, part: "morning" }, { day: 6, part: "afternoon" }] };
+    prefs.daysOff = { mode: "preferred", days: [8] };
+    expect(saveState(saved({ prefs }), storage)).toBe(true);
+    const loaded = loadSaved(storage).prefs;
+    expect(loaded.programs).toEqual({ mode: "required", allowed: ["L"] });
+    expect(loaded.partsOff).toEqual({ mode: "preferred", parts: [{ day: 2, part: "morning" }, { day: 6, part: "afternoon" }] });
+  });
+
+  it("gives a save without the new requirements their defaults", () => {
+    const stored = { pastes: [], prefs: { freeSeats: { mode: "required" } } };
+    const loaded = loadSaved(memoryStorage({ [STORAGE_KEY]: JSON.stringify(stored) })).prefs;
+    expect(loaded.programs).toEqual({ mode: "required", allowed: [] }); // app default: required, nothing chosen
+    expect(loaded.partsOff).toEqual({ mode: "off", parts: [] });
   });
 
   it("accepts only real dates as the semester start", () => {

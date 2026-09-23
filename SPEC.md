@@ -16,10 +16,11 @@ Out of scope:
 
 ## 3. Domain conventions
 - Day: 2..7 = Thứ 2..Thứ 7, 8 = Chủ nhật.
-- Period (tiết): 1..16. Default buckets: morning 1–6, afternoon 7–12 (configurable constants).
+- Period (tiết): 1..16. Default buckets: morning 1–6, afternoon 7–12, evening 13–16 (configurable constants).
 - Campus: 1 = CS1 (Lý Thường Kiệt), 2 = CS2 (Dĩ An).
 - Weeks string: character at 0-based index i = week i+1; "-" = no class.
 - Group id: "A01_A01" (theory group _ practice/lab group) or "A01" (course has no practice/lab group).
+- Program track (chương trình đào tạo): the leading letters of the theory group code — `L` = đại trà, `A` = Tiếng Nhật / Việt-Pháp, `CC` = chất lượng cao, `TN` = tài năng. Any other prefix is kept as it is and labelled "Khác"; it is never dropped.
 - Lab sessions: weeks are never consecutive (e.g. [6,10,12,14]); usually 5 periods.
 - Two sessions conflict ONLY IF same day AND overlapping periods AND overlapping weeks.
 - Summary-row BB/TC column is optional and never starts with a digit (course names may end with a number, e.g. "Giải tích 1").
@@ -64,13 +65,25 @@ Time bitmask (Phase 2): 30 weeks × 7 days × 16 periods = 3360 bits, stored as 
 
 ## 7. Preferences
 Always hard: no time conflict; exactly one group per course.
-User-selectable Required/Preferred:
-- Allowed campus(es); days off; language (V/TA); only groups with free seats; include/exclude lecturer; lock a specific group; exclude a specific group.
+User-selectable Required/Preferred (`CONSTRAINTS`, in this order):
+- `programs` — program track of the group (Phase 7). The first thing the user picks: step 3 shows the program card above every other requirement, listing only the programs present in the pasted courses with their group counts ("L — đại trà (18 nhóm)").
+- `campuses` — allowed campus(es).
+- `daysOff` — whole days off.
+- `partsOff` — half-days off (Phase 7): (day, part) pairs, part ∈ morning / afternoon / evening. A group breaks it when any session has a period inside a selected half-day. Step 3 shows `daysOff` and `partsOff` in one card, "Ngày và buổi nghỉ", under one mode selector: "Cả ngày" sets `daysOff` and disables that day's three part toggles (they are implied); picking all three parts does NOT become "Cả ngày".
+- `language` — V / TA.
+- `freeSeats` — only groups with free seats.
+- `avoidLecturers` — exclude a lecturer by name.
+Also always hard, with their own actions rather than a mode: lock a specific group; exclude a specific group.
+An EMPTY selection for `programs` or `partsOff` filters nothing and is never reported as relaxed, whatever its mode, so the program card can default to "Bắt buộc" with nothing chosen.
 Soft only (weighted score):
 - Prefer afternoon (or morning) periods; fewer days on campus; compact days (few idle periods between classes); no campus switch within one day; avoid periods 1–2.
-App defaults (Phase 4): the solver's `DEFAULT_PREFERENCES` (every constraint off) are unchanged; the app starts from them with `freeSeats` set to "preferred", so the first suggestions avoid groups that are already full.
+App defaults (Phase 4, extended in Phase 7): the solver's `DEFAULT_PREFERENCES` (every constraint off) are unchanged; the app starts from them with `freeSeats` set to "preferred", so the first suggestions avoid groups that are already full, and `programs` set to "required" with nothing chosen.
 Relaxation: if any course has zero valid groups or the search finds zero schedules, convert user "Required" items into soft penalties with a very large weight, re-run, and report every relaxed/violated item.
-Equivalent-group collapsing: within a course, groups with identical time masks AND identical per-session campus AND the same language, free-seats status and lecturer-avoid status score identically in every schedule. The solver searches one representative per class (lexicographically smallest id) and lists the other group keys as alternatives of the pick, so the user can register any of them.
+Missing program (Phase 7): when `programs` is required and a course has no group in the allowed set, the solver adds the diagnostic `course-no-program`, naming the course and the programs it does have (e.g. "SK2001 … chỉ có A, CC"). In the UI that diagnostic carries a "Bỏ lọc chương trình" button, which sets `programs.mode = "off"` and re-runs.
+Equivalent-group collapsing: within a course, groups with identical time masks AND identical per-session campus AND the same language, program track, free-seats status and lecturer-avoid status score identically in every schedule. The solver searches one representative per class (lexicographically smallest id) and lists the other group keys as alternatives of the pick, so the user can register any of them. (`daysOff` and `partsOff` need no place in the key: they follow from the sessions.)
+
+### 7b. Paste timestamps (Phase 7)
+Each stored course block carries `pastedAt` (ISO), set when it is added or re-pasted; a save written before Phase 7 loads as `null` = "không rõ thời điểm". Data older than `STALE_PASTE_MS` (30 minutes), or of unknown age, is **stale**: steps 1 and 2 show "Dán 12 phút trước" and mark stale blocks with a warning style and a "nên dán lại" hint, and steps 4 and 5 show one banner ("Số chỗ trống có thể đã thay đổi — nên dán lại dữ liệu trước khi đăng ký.") when any course of the shown schedule is stale. Nothing is blocked. The clock is always passed in as a parameter (`formatAge(pastedAt, now)`), never read inside a pure helper.
 
 ## 8. Solver
 1. Filter each course's groups by hard constraints.

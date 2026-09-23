@@ -1,4 +1,4 @@
-import type { Day } from "../parser";
+import { programOf, type Day } from "../parser";
 import { conflicts, conflictSummary, type ConflictSummaryItem, type IndexedCourse, type IndexedGroup } from "../timing";
 import { RELAX_WEIGHT } from "./constants";
 import { buildCandidates } from "./equivalence";
@@ -109,6 +109,11 @@ function nonEmpty<T>(items: T[]): boolean {
   return items.length > 0;
 }
 
+/** Program codes present among these groups, sorted, without duplicates. */
+function programsOf(groups: IndexedGroup[]): string[] {
+  return [...new Set(groups.map((g) => programOf(g.group)))].sort();
+}
+
 /** Searches once over the allowed groups of every course. */
 function attempt(
   courses: IndexedCourse[],
@@ -166,19 +171,38 @@ function explainRequired(
   const lines = courses.flatMap((course, i) => {
     if (hard[i].length === 0 || strict[i].length > 0) return [];
     const blocking = required.filter((name) => applyConstraints(hard[i], [name], prefs).length === 0);
-    return blocking.length > 0
-      ? [
-          diagnostic("course-blocked", `${course.code}: no group meets the required ${blocking.join(", ")}.`, {
-            course: course.code,
-            constraints: blocking,
-          }),
-        ]
-      : [
-          diagnostic("course-blocked-combined", `${course.code}: no group meets all required constraints together (${required.join(", ")}).`, {
-            course: course.code,
-            constraints: [...required],
-          }),
-        ];
+    if (blocking.length === 0) {
+      return [
+        diagnostic("course-blocked-combined", `${course.code}: no group meets all required constraints together (${required.join(", ")}).`, {
+          course: course.code,
+          constraints: [...required],
+        }),
+      ];
+    }
+    const items: SolverDiagnostic[] = [];
+    // The program filter gets its own diagnostic: it names the programs the
+    // course does have, which is what the user needs in order to fix it.
+    if (blocking.includes("programs")) {
+      const available = programsOf(hard[i]);
+      const allowed = [...prefs.programs.allowed];
+      items.push(
+        diagnostic(
+          "course-no-program",
+          `${course.code}: no group belongs to the required program(s) ${allowed.join(", ")}; it only has ${available.join(", ")}.`,
+          { course: course.code, allowed, available },
+        ),
+      );
+    }
+    const others = blocking.filter((name) => name !== "programs");
+    if (others.length > 0) {
+      items.push(
+        diagnostic("course-blocked", `${course.code}: no group meets the required ${others.join(", ")}.`, {
+          course: course.code,
+          constraints: others,
+        }),
+      );
+    }
+    return items;
   });
   if (lines.length === 0 && strict.every(nonEmpty)) {
     lines.push(

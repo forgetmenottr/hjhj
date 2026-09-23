@@ -29,9 +29,14 @@ function Banner({ tone, icon, title, children }: { tone: Tone; icon: ReactNode; 
   );
 }
 
-/** Solver diagnostics, in Vietnamese (the library's English text if a code is unknown). */
-function Diagnostics({ items }: { items: SolverDiagnostic[] | undefined }) {
+/**
+ * Solver diagnostics, in Vietnamese (the library's English text if a code is
+ * unknown). "Không có nhóm nào thuộc chương trình bắt buộc" gets a way out:
+ * one button that turns the program filter off and re-runs.
+ */
+function Diagnostics({ items, onDropProgramFilter }: { items: SolverDiagnostic[] | undefined; onDropProgramFilter?: () => void }) {
   if (!items || items.length === 0) return null;
+  const noProgram = items.some((item) => item.code === "course-no-program");
   return (
     <div>
       <p className="text-ctp-subtext">Chi tiết từ bộ xếp lịch:</p>
@@ -40,6 +45,13 @@ function Diagnostics({ items }: { items: SolverDiagnostic[] | undefined }) {
           <li key={i}>{diagnosticText(item)}</li>
         ))}
       </ul>
+      {noProgram && onDropProgramFilter && (
+        <div className="mt-2">
+          <Button variant="primary" onClick={onDropProgramFilter}>
+            <RefreshIcon className="size-4" /> Bỏ lọc chương trình
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -55,17 +67,21 @@ export function StatusBanner({
   outcome,
   error,
   stale,
+  staleCourses = [],
   hasAutoLocks,
   quiet = false,
   onCancel,
   onRerun,
   onUndoAutoLocks,
+  onDropProgramFilter,
 }: {
   ref?: Ref<HTMLDivElement>;
   status: SolverStatus;
   outcome: SolveOutcome | null;
   error: string | null;
   stale: boolean;
+  /** Courses of the shown schedule whose pasted data may be out of date. */
+  staleCourses?: string[];
   /** Some locks were added by "Đã đầy"; an infeasible result then offers to drop them. */
   hasAutoLocks: boolean;
   /** Step 5: only running / error / nothing-fits are worth a banner there. */
@@ -73,6 +89,8 @@ export function StatusBanner({
   onCancel: () => void;
   onRerun: () => void;
   onUndoAutoLocks: () => void;
+  /** Sets `programs.mode` to "off" and re-runs (offered by the missing-program diagnostic). */
+  onDropProgramFilter?: () => void;
 }) {
   const result = outcome?.result;
   const details = result?.diagnosticDetails;
@@ -100,7 +118,7 @@ export function StatusBanner({
   } else if (result?.status === "ok") {
     main = (
       <Banner tone="green" icon={<CheckIcon className="size-5 text-ctp-green" />} title={`Tìm được ${result.schedules.length} lịch không trùng giờ, đáp ứng mọi yêu cầu bắt buộc.`}>
-        <Diagnostics items={details} />
+        <Diagnostics items={details} onDropProgramFilter={onDropProgramFilter} />
       </Banner>
     );
   } else if (result?.status === "relaxed") {
@@ -110,7 +128,7 @@ export function StatusBanner({
           Các yêu cầu sau đã tạm chuyển thành ưu tiên (bị trừ điểm rất nặng nếu vi phạm):{" "}
           <strong>{result.relaxed.map(itemLabel).join(", ")}</strong>. Lịch vi phạm có dấu ⚠ trên thẻ lịch; chi tiết ở phần điểm.
         </p>
-        <Diagnostics items={details} />
+        <Diagnostics items={details} onDropProgramFilter={onDropProgramFilter} />
       </Banner>
     );
   } else if (result?.status === "infeasible" && hasAutoLocks) {
@@ -120,14 +138,14 @@ export function StatusBanner({
         <Button variant="primary" onClick={onUndoAutoLocks}>
           <RefreshIcon className="size-4" /> Thử lại, không giữ các môn khác
         </Button>
-        <Diagnostics items={details} />
+        <Diagnostics items={details} onDropProgramFilter={onDropProgramFilter} />
       </Banner>
     );
   } else if (result?.status === "infeasible") {
     main = (
       <Banner tone="red" icon={<AlertIcon className="size-5 text-ctp-red" />} title="Không có lịch nào phù hợp.">
         <p>Mọi cách chọn nhóm đều bị trùng giờ hoặc bị loại. Hãy bỏ bớt nhóm đã khoá / đã loại, bớt yêu cầu hoặc đổi môn.</p>
-        <Diagnostics items={details} />
+        <Diagnostics items={details} onDropProgramFilter={onDropProgramFilter} />
       </Banner>
     );
   } else {
@@ -141,6 +159,13 @@ export function StatusBanner({
   return (
     <div ref={ref} tabIndex={-1} role="status" aria-live="polite" className="space-y-3 focus:outline-none">
       {main}
+      {staleCourses.length > 0 && status !== "running" && (
+        <Banner tone="yellow" icon={<AlertIcon className="size-5 text-ctp-yellow" />} title="Số chỗ trống có thể đã thay đổi — nên dán lại dữ liệu trước khi đăng ký.">
+          <p>
+            Dữ liệu đã dán khá lâu cho: <strong>{staleCourses.join(", ")}</strong>. Quay lại bước 1 và dán lại nếu muốn chắc chắn.
+          </p>
+        </Banner>
+      )}
       {stale && !quiet && status !== "running" && (
         <Banner tone="yellow" icon={<InfoIcon className="size-5 text-ctp-yellow" />} title="Kết quả đã cũ — chạy lại">
           <p>Danh sách môn hoặc yêu cầu đã thay đổi sau lần xếp lịch này.</p>

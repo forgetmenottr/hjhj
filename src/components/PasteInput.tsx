@@ -1,17 +1,20 @@
 import { useId, useRef, useState } from "react";
 import type { ParsedPaste } from "../app/pastes";
 import type { PasteNotice } from "../app/state";
-import { Badge, Button, Card, CheckIcon, CloseIcon, InfoIcon, PlusIcon } from "./ui";
+import { Badge, Button, Card, CheckIcon, CloseIcon, InfoIcon, PasteAge, PlusIcon } from "./ui";
 
 /** Step 1: paste box, instructions and the list of added courses. */
 export function PasteInput({
   courses,
   notice,
+  now,
   onAdd,
   onRemove,
 }: {
   courses: ParsedPaste[];
   notice: PasteNotice | null;
+  /** Clock of the render, for the "Dán … trước" line. */
+  now: number;
   /** Returns true if at least one course was found (the box is then cleared). */
   onAdd: (text: string) => boolean;
   onRemove: (code: string) => void;
@@ -78,7 +81,7 @@ export function PasteInput({
         ) : (
           <ul className="mt-3 space-y-2">
             {courses.map((p) => (
-              <CourseChip key={p.code} paste={p} onRemove={() => onRemove(p.code)} />
+              <CourseChip key={p.code} paste={p} now={now} onRemove={() => onRemove(p.code)} />
             ))}
           </ul>
         )}
@@ -87,7 +90,7 @@ export function PasteInput({
   );
 }
 
-function CourseChip({ paste, onRemove }: { paste: ParsedPaste; onRemove: () => void }) {
+function CourseChip({ paste, now, onRemove }: { paste: ParsedPaste; now: number; onRemove: () => void }) {
   const groups = paste.course?.groups.length ?? 0;
   return (
     <li className="flex items-center gap-3 rounded-xl bg-ctp-surface0/60 py-2 pr-2 pl-3">
@@ -99,6 +102,7 @@ function CourseChip({ paste, onRemove }: { paste: ParsedPaste; onRemove: () => v
         <div className="mt-1 flex flex-wrap gap-1.5">
           <Badge tone={groups > 0 ? "neutral" : "red"}>{groups} nhóm</Badge>
           {paste.warnings.length > 0 && <Badge tone="yellow">{paste.warnings.length} cảnh báo</Badge>}
+          <PasteAge pastedAt={paste.pastedAt} now={now} />
         </div>
       </div>
       <Button variant="ghost" onClick={onRemove} aria-label={`Xoá ${paste.code}`} className="px-2.5!">
