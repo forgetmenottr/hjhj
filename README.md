@@ -2,7 +2,7 @@
 
 Ứng dụng web giúp sinh viên HCMUT chọn nhóm lớp cho 5–6 môn trong đợt đăng ký môn học. Bạn dán dữ liệu copy từ **trang đăng ký môn học**, chọn yêu cầu (cơ sở, ngày nghỉ, ngôn ngữ, còn chỗ, tránh giảng viên…), và ứng dụng tìm các thời khoá biểu không trùng giờ phù hợp nhất. Nếu không lịch nào đáp ứng hết yêu cầu, ứng dụng đưa ra lịch gần nhất và ghi rõ yêu cầu nào bị vi phạm.
 
-Trang web: `https://forgetmenottr.github.io/hjhj/` 
+Trang web: `https://<tên-dự-án>.vercel.app/`
 
 ## Các bước sử dụng
 
@@ -28,9 +28,18 @@ npm install
 npm run dev       # máy chủ phát triển: http://localhost:5173/
 npm test          # Vitest: parser, timing, solver, giao diện (jsdom), tương phản màu…
 npm run lint      # oxlint
-npm run build     # tsc -b rồi build vào dist/ (base = /tkb_web/)
-npm run preview   # xem bản build: http://localhost:4173/tkb_web/
+npm run build     # tsc -b rồi build vào dist/
+npm run preview   # xem bản build: http://localhost:4173/
 ```
+
+## Triển khai
+
+Ứng dụng được triển khai trên **Vercel**:
+
+1. Trên Vercel, chọn **Add New → Project** và import repo GitHub này.
+2. Vercel tự nhận preset **Vite**; giữ nguyên lệnh build `npm run build` và thư mục output `dist`.
+
+Không cần `vercel.json`: ứng dụng chỉ có một trang, không có router. GitHub Actions (`.github/workflows/ci.yml`) chỉ chạy test, lint và kiểm tra kiểu, không triển khai.
 
 ## Cấu trúc
 
