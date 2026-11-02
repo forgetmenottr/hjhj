@@ -10,11 +10,11 @@ Every number below was re-measured on 2026-09-23 on the six fixtures in `tests/f
 ## 1. TL;DR
 
 - **What:** a client-only web app. HCMUT students paste the course blocks copied from the **registration page**, set constraints, and get the top-5 conflict-free timetables. From there they can lock groups, handle a full group, and register from a checklist. Exports: `.ics`, PNG, print.
-- **Status:** Phases 1–7 are done and committed but **not pushed or deployed yet**. 395 tests pass (16 files); `tsc -b`, `oxlint` and `vite build` are clean.
+- **Status:** Phases 1–7 are done and pushed (`origin/main` at `7659fd3`). The Vercel project is **not created yet** (§9). 395 tests pass (16 files); `tsc -b`, `oxlint` and `vite build` are clean.
 - **Stack:** React 19, Vite 8, TypeScript ~6.0, Tailwind v4 and Vitest 5. The solver runs in a module Web Worker. The only runtime dependencies are `react` and `react-dom`.
 - **Run:** `npm install`, then `npm run dev` → http://localhost:5173/
 - **Test:** `npm test` (about 15 s). Full gate: bash `npm test && npx tsc -b && npm run lint && npm run build`. On PowerShell 5.1 the same gate is in §7.
-- **Deploy:** GitHub Actions → GitHub Pages at `https://forgetmenottr.github.io/tkb_web/`. It goes live after a push to `main`, once Settings → Pages → Source is set to "GitHub Actions" (§9).
+- **Deploy:** Vercel (Vite preset, `npm run build` → `dist`, served at `/`; no `vercel.json`). The project still has to be created by importing the repo on Vercel (§9). GitHub Actions (`.github/workflows/ci.yml`) only runs test, lint and `tsc -b`; it does not deploy.
 
 ---
 
@@ -250,9 +250,17 @@ The repo was produced phase by phase by an AI coding agent working from written 
 | 4 worker + UI 1–4 | `4b36c5a` | **158 (8)** | worker protocol, reducer, storage, steps 1–4 |
 | 5 lock / full / weeks | `6c6c743` | **185 (9)** | locks, "Đã đầy" re-run, week selector, relaxed display |
 | 6 ship | `d1ab088` | **346 (16)** | step 5, export, Vietnamese codes, a11y, perf, SK2001, deploy |
-| 7 program / half-day / timestamps | (this commit) | **395 (16)** | `programs` + `partsOff` constraints, missing-program diagnostic, paste ages |
+| 7 program / half-day / timestamps | `3c48963` | **395 (16)** | `programs` + `partsOff` constraints, missing-program diagnostic, paste ages |
 
 These counts were re-run at each commit in temporary worktrees on 2026-09-23.
+
+**Lost and recreated commits.** Six commits made on 2026-09-28 were never pushed and were lost when the author's machine failed. They were recreated on 2026-11-02 from a written brief, which describes four changes:
+- moving deployment from GitHub Pages to Vercel (`vite.config.ts` back to base `/`, `deploy.yml` replaced by a test-only `ci.yml`, `engines.node = 24.x`, README) — recreated;
+- removing `conflictTable` from `solver/search.ts` as unused — **not** recreated: in the current code `search()` calls it to build its conflict table, so it is not dead code (see §6);
+- syncing SPEC, this file and the lib READMEs with the code — recreated;
+- a project favicon in place of the default Vite logo — recreated.
+
+The brief does not say what the other two of the six commits contained. If one of them changed `search()` so that it no longer used `conflictTable`, that work is still missing.
 
 ### Phase 1 — parser
 **Shipped:** `parse()`, handling tab-separated and space-collapsed layouts; warnings instead of exceptions; tests on real fixtures and on edge cases derived from them.
@@ -379,7 +387,7 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 | Program track lives in `src/lib/parser/program.ts`, not in `src/lib/view/` | `solver/filter.ts` needs `programOf`, and `view` already depends on `solver`; the parser is the lowest layer, and the prefix is a parsing convention of the group id | `lib/parser/program.ts`, re-exported from `lib/parser/index.ts` | Yes |
 | An empty `programs.allowed` / `partsOff.parts` filters nothing and is never relaxed | The program card defaults to "Bắt buộc" with nothing chosen, and a requirement that cannot reject anything must not be reported as violated or relaxed. Guarded in two places: `violates` (for direct callers and the equivalence key) and `constraintsWithMode` via `isActive`. The Phase 3 constraints keep their old behavior, so all 346 earlier tests are untouched | `solver/filter.ts:isActive`, `violates` | Yes |
 | App default `programs: "required"` with `allowed: []`; solver `DEFAULT_PREFERENCES` still all off | Same split as `freeSeats` in Phase 4: the solver stays neutral for tests, the app shows the mode the student needs. Harmless because of the rule above | `app/state.ts:defaultPrefs` | Yes |
-| The program track is part of the equivalence key; `daysOff` / `partsOff` are not | Two groups can share every slot and differ only in program (the Phase 7 test derives one from CO2011:CC01), so collapsing them would hide a filtered group. Day and half-day violations follow from the sessions, which the key already serializes | `solver/equivalence.ts:equivalenceKey`, mirrored in `tests/solver.test.ts:referenceCollapse` | Yes |
+| The program flag (`violates("programs")`, i.e. whether the group's program is outside `allowed`) is part of the equivalence key; `daysOff` / `partsOff` are not | Two groups can share every slot and differ only in program (the Phase 7 test derives one from CO2011:CC01), so collapsing one that the program filter rejects with one it keeps would hide a filtered group. Groups of different programs that the filter treats alike still collapse. Day and half-day violations follow from the sessions, which the key already serializes | `solver/equivalence.ts:equivalenceKey`, mirrored in `tests/solver.test.ts:referenceCollapse` | Yes |
 | `course-no-program` is its own diagnostic, alongside `course-blocked` for the other blockers | "No group meets the required Chương trình" does not say what to do; naming the programs the course *does* have (SK2001: only A and CC) does, and it is what the "Bỏ lọc chương trình" button hangs on | `solver/solve.ts:explainRequired`, `components/StatusBanner.tsx` | Yes |
 | "Cả ngày" and the three parts stay two constraints | `daysOff` keeps its Phase 3 meaning and its own storage; the card only shares a mode. Picking all three parts is not rewritten into "Cả ngày" (the prompt's rule), and "Cả ngày" disables but never clears the parts, so unticking it restores the user's choice | `components/PreferencesForm.tsx:DayPartGrid`, `solver/filter.ts` | Yes |
 | An unknown paste age counts as stale | `pastedAt: null` only comes from a save written before Phase 7, so the data is at least one session old; the banner is a warning, never a block, and claiming freshness we cannot verify is the worse error | `view/format.ts:isStalePaste` | Yes |
@@ -389,7 +397,7 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 | `ctp-` token prefix | Avoids clashes like `text-base` (Tailwind font size) vs `base` (color) | `src/index.css` `@theme` | Costly (touches every class) |
 | `.ics`: one event per run of periods per week, stable UIDs without the date | Re-importing after changing the semester start updates events instead of duplicating them | `lib/export/ics.ts:icsEvents` | Yes |
 | Semester start snapped to its Monday | Week and day arithmetic assumes week 1 starts on Monday; the UI says which Monday was used | `lib/export/ics.ts:mondayOf`, `components/ExportPanel.tsx` | Yes |
-| Vite `base` = `/<repo>/` for build and preview only | GitHub Pages serves under the repo path; dev and tests stay at `/` | `vite.config.ts` | Yes |
+| Vite `base` = default `/` for dev, build and preview; no `vercel.json` | Vercel serves the app at the domain root. Until 2026-11-02 the build used `/<repo>/` for GitHub Pages. The app has one URL and no router (no `window.location`, `history.` or router import in `src/`), so no rewrites are needed | `vite.config.ts` | Yes |
 
 ---
 
@@ -404,7 +412,7 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 - **jsdom smoke tests** (`tests/app.smoke.test.tsx`). `useSolver` is mocked with a synchronous `handleRequest` behind a stable `useMemo`, which the debounce needs. They drive the full flows: paste, lock, "Đã đầy", infeasible → retry, relaxed labels, week selector, step 5 checklist and copy, SK2001 label.
 - **Contrast** (`tests/contrast.test.ts`). It parses the tokens from `src/index.css` and composites alpha and `color-mix(in oklab)` like the browser. Text must reach ≥ 4.5:1 and UI borders ≥ 3:1. It also checks the print (Latte) palette.
 - **Performance sanity checks.** `tests/perf.test.ts` runs the 4 configurations on all fixtures with a < 3000 ms limit each. `solver.test.ts` has a < 2000 ms defaults check, and `timing.test.ts` a < 3000 ms `conflicts()` loop. These catch order-of-magnitude regressions only.
-- **Browser checks (not in the repo).** Headless Chrome was driven over the DevTools Protocol by throwaway scripts: flows at 375 and 1280 px, real `.ics`/`.png` downloads, print emulation, a keyboard-only walk, and `vite preview` under `/tkb_web/`. They are not committed; see §10.
+- **Browser checks (not in the repo).** Headless Chrome was driven over the DevTools Protocol by throwaway scripts: flows at 375 and 1280 px, real `.ics`/`.png` downloads, print emulation, a keyboard-only walk, and `vite preview` under `/tkb_web/` (the GitHub Pages base at the time; the base is now `/`). They are not committed; see §10.
 
 **Fixture rule.** `tests/fixtures/*.txt` is **always real text copied from the registration page**, never typed or invented.
 - The six fixtures are CO2001, CO2003, CO2007, CO2011, SK2001 and SP1031. CO2001's name "Kỹnăng chnghiệp cho kỹsư" is garbled as it was copied; keep it.
@@ -437,7 +445,7 @@ Full gate, bash: `npm test && npx tsc -b && npm run lint && npm run build`
 
 Full gate, PowerShell 5.1 (no `&&`): `npm test; if ($?) { npx tsc -b }; if ($?) { npm run lint }; if ($?) { npm run build }`
 
-Production check, both shells: `npm run build`, then `npm run preview` → http://localhost:4173/tkb_web/
+Production check, both shells: `npm run build`, then `npm run preview` → http://localhost:4173/
 
 ---
 
@@ -471,7 +479,7 @@ Production check, both shells: `npm run build`, then `npm run preview` → http:
 
 Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1)–(4) are unchanged from Phase 6 within noise, and their node counts are bit-identical, which is what pins the Phase 7 constraints as behavior-preserving when they are off. The "bundled Node" and "old solver" columns were not re-measured in Phase 7.
 
-- **Browser:** the production build under `vite preview` at `/tkb_web/`, config (1): solver 306–313 ms, round trip 313–318 ms over 3 runs (headless Chrome, Windows 11).
+- **Browser:** the production build under `vite preview` at `/tkb_web/` (the Pages base at the time), config (1): solver 306–313 ms, round trip 313–318 ms over 3 runs (headless Chrome, Windows 11).
 - **Equivalence classes per course** (groups → classes):
   - (3): CO2001 3→3, CO2003 5→5, CO2007 6→6, CO2011 7→7, SK2001 58→36, SP1031 11→10;
   - (4): CO2001 3→3, CO2003 6→6, CO2007 14→14, CO2011 9→9, SK2001 15→11, SP1031 14→13;
@@ -499,7 +507,9 @@ Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1
 ## 9. Known limitations & open items
 
 **Not done yet:**
-- **Deployment has never run.** Nothing has been pushed. One-time setup: repo Settings → Pages → Source = "GitHub Actions". The workflow in `.github/workflows/deploy.yml` then runs `npm ci`, test, lint and build on Node 24 and deploys `dist/`.
+- **The Vercel project does not exist yet.** The repo is pushed (`forgetmenottr/hjhj`, renamed from `tkb_web`; `origin/main` at `7659fd3` before the 2026-11-02 commits). One-time setup on Vercel: Add New → Project → import the repo; the Vite preset is detected, build `npm run build`, output `dist`. Then replace the placeholder `https://<tên-dự-án>.vercel.app/` in `README.md` with the real URL.
+- **The old GitHub Pages site is still up.** On 2026-11-02 `https://forgetmenottr.github.io/hjhj/` answered 200 (and `/tkb_web/` 404). With `deploy.yml` removed it will no longer update; turn Pages off in the repo settings once Vercel is live.
+- **CI** (`.github/workflows/ci.yml`) runs `npm ci`, `npm test`, `npm run lint` and `npx tsc -b` on Node 24 for every push and pull request. It has not run on GitHub yet.
 - **No screen-reader testing** (NVDA, TalkBack, VoiceOver). The keyboard-only walk was done in headless Chrome at 1280 px only, not at 375 px.
 - **No user testing with students.** The script and the empty results table are in `docs/user-testing.md`.
 
@@ -534,16 +544,8 @@ Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1
 - **`pastedAt` is not re-checked against the registration page.** The 30-minute threshold is a guess at how fast seat counts move; the banner never blocks anything.
 - **The clock ticks every 30 s** (`CLOCK_MS` in `App.tsx`), so "Dán 12 phút trước" can be up to 30 s stale on screen.
 
-**Where SPEC.md disagrees with the code** (the code is the truth; SPEC §7 was rewritten in Phase 7):
-- **§5:**
-  - "localStorage (`tkb:v1`) keeps only the raw pastes and the preferences". It now also stores `autoLocked`, `registered` and `semesterStart`.
-  - "`useSolver` … reports progress". There is no progress reporting: the worker sends one response per request.
-- **§6:** `ParseWarning { line; text; message; }`. The code adds `code` and `params`.
-- **§7:** rewritten in Phase 7; it now matches the code, including that lock / exclude are always hard and that only `avoidLecturers` (exclude) exists.
-- **§8:**
-  - "keep top-K in a min-heap": the code keeps a sorted array (`TopK` in `search.ts`, K = 5).
-  - "Order courses by ascending number of remaining groups (MRV)": the code orders by number of equivalence *classes*.
-- **§11 Phase 6 "Done when … v1.0 deployed":** not yet; user testing is also pending.
+**Where SPEC.md disagrees with the code** (the code is the truth): SPEC §5, §6, §8, §9 and §10 were brought in line with the code on 2026-11-02 (storage fields, no progress reporting, `ParseWarning.code`/`params`, sorted top-K array, MRV by classes, Vercel, the folder tree and the 5-step flow); §7 was rewritten in Phase 7, and on 2026-11-02 its equivalence wording was corrected (the key holds the program-filter flag, not the program itself). What remains:
+- **§11 Phase 6 "Done when … v1.0 deployed":** not yet (no Vercel project); user testing is also pending.
 
 **Corrected assumption from the original prompts (not in SPEC):** rooms were said to "always match `/^[A-Z]\d{1,2}-\d{3}$/`". SP1031's halls (`C5-HOITRUONG`, `H1-GDH1`, `H6-GDH6`) disproved it, and the parser was widened in Phase 6.
 
@@ -570,8 +572,8 @@ Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1
   - Files: new `src/app/share.ts`, `src/App.tsx`, `src/components/Checklist.tsx` ("Sao chép liên kết"), `src/app/state.ts`.
 - **Travel time between campuses.** CS1 ↔ CS2 takes about an hour, so it needs a constraint that forbids or penalizes a campus switch between adjacent periods on the same day. It is a stronger version of `noCampusSwitch`. It needs per-cell campus bits, which `GroupFeatures.cellCampus1/2` already provide.
   - Files: `src/lib/solver/types.ts` (`Preferences`, `CONSTRAINTS` or weights), `score.ts` (both `timeMetrics` and `createState`, kept bit-identical), `src/components/PreferencesForm.tsx`, `src/lib/view/format.ts:ITEM_LABELS`, `solver/README.md`, brute-force tests.
-- **Committed browser e2e tests.** Playwright as a devDependency: the flows at 375/1280 px, keyboard walk, downloads, and preview under `/tkb_web/`.
-  - Files: new `tests/e2e/`, `package.json`, `.github/workflows/deploy.yml`.
+- **Committed browser e2e tests.** Playwright as a devDependency: the flows at 375/1280 px, keyboard walk, downloads, and the production build under `vite preview`.
+  - Files: new `tests/e2e/`, `package.json`, `.github/workflows/ci.yml`.
 - **Automated mutation testing** (e.g. Stryker as a devDependency) for `src/lib/**`.
   - Files: `package.json`, a new config.
 - **Solver progress and cancel granularity.** Post progress every N nodes from the worker, and show nodes/s and a real cancel.
@@ -581,7 +583,7 @@ Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1
 - **Multi-semester support.** Namespace the storage per semester (`tkb:v1` → `tkb:v2:<term>` with a migration) and add a semester picker; keep old data.
   - Files: `src/app/storage.ts`, `src/app/state.ts`, `src/App.tsx`, `tests/storage.test.ts`.
 - **PWA / offline.** A web manifest plus a service worker that pre-caches `dist/` (the app is fully client-side already).
-  - Files: `index.html`, new `public/manifest.webmanifest`, a new service-worker source (hand-written, or a Vite plugin as a devDependency), `vite.config.ts` (base-aware scope).
+  - Files: `index.html`, new `public/manifest.webmanifest`, a new service-worker source (hand-written, or a Vite plugin as a devDependency), `vite.config.ts` (the app is served at `/`, so the scope is the root).
 - **Forward checking / smarter search for 7–8+ courses** (see §8 levers 4–5).
   - Files: `src/lib/solver/search.ts`, `solver/README.md`.
 - **Registration-result page parser.** Explicitly out of scope today, and needs real copied fixtures first.
@@ -606,7 +608,7 @@ This is the process that produced the repo. Keep it unless the owner says otherw
 5. **Do not change behavior outside the scope.** If you find a real bug in an earlier phase's code, fix it minimally, add a test, and report it. Examples: the Phase 6 `ROOM` regex, and the Phase 3 summary-row regex fix.
 6. **No new runtime dependencies.** devDependencies only when justified in the report.
 7. **Gate before reporting.** `npm test && npx tsc -b && npm run lint && npm run build` must be clean; use the PowerShell equivalent in §7. For UI work, also run the app in a real browser at 375 px and ≥ 1024 px with all fixtures, and look at the screenshots.
-8. **Commit per phase** with the exact message the prompt gives, on `main`. Do not push; the owner pushes, which triggers the deploy.
+8. **Commit per phase** with the exact message the prompt gives, on `main`. Push only when the prompt says so; otherwise the owner pushes. (No deploy runs from GitHub Actions any more; see §9 for Vercel.)
 9. **Safety check first.** `git rev-parse --show-toplevel` must be this project and `git status` must be clean, otherwise stop and ask. Earlier in this project the git root was the home directory, and committing there would have been wrong.
 10. **Keep SPEC.md honest.** When a phase's decision changes the product, update SPEC.md in that phase and link to it from here. Record the *why* in §6 of this file.
 11. **UI conventions:**

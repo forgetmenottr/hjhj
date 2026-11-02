@@ -133,4 +133,7 @@ The parser warns and continues when:
 - Input is normalized to Unicode NFC. Non-breaking spaces become plain spaces.
 - Each group or session occupies exactly one line. A lecturer cell that spans
   several lines inside quotes is not supported.
-- A course or group pasted twice is kept twice. Removing duplicates is left to the UI.
+- A course or group pasted twice is kept twice. Duplicates are removed later by
+  `buildMasks` in [`lib/timing`](../timing/build.ts): the later copy wins and
+  replaces the earlier one in place, with a `duplicate-course` /
+  `duplicate-group` warning.

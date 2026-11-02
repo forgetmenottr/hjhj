@@ -36,13 +36,20 @@ Tests: [`tests/solver.test.ts`](../../../tests/solver.test.ts).
 Each group-level constraint has a mode: `"off"`, `"required"` (a filter) or
 `"preferred"` (a soft penalty).
 
+Constraints, in `CONSTRAINTS` order:
+
 | Constraint | A group violates it when |
 |---|---|
+| `programs` | `allowed` is not empty and the group's program track (`programOf`: the leading letters of the theory group, e.g. `L`, `CC`) is not in it |
 | `campuses` | any session's campus is not in `allowed`. An unknown campus (`null`) counts as not allowed. |
 | `daysOff` | any session falls on one of `days` |
+| `partsOff` | any session has a period inside one of `parts`, a `{ day, part }` pair where `part` is `morning` (1–6), `afternoon` (7–12) or `evening` (13–16) (`DAY_PARTS`) |
 | `language` | `group.language` is not in `allowed` (trimmed, case-insensitive) |
 | `freeSeats` | `registered >= capacity` |
 | `avoidLecturers` | a name in `names` appears as whole words in `lecturer` or `labLecturer`, ignoring case and diacritics (`đ` → `d`) |
+
+`programs` with an empty `allowed` and `partsOff` with an empty `parts` filter
+nothing and are never applied or relaxed, whatever their mode (`isActive`).
 
 Some rules are **always hard** and are never relaxed:
 
@@ -60,12 +67,13 @@ fall back to 5 / 5,000,000.
 
 1. **Filter** ([`filter.ts`](./filter.ts)). For each course, drop excluded
    groups and, if the course is locked, keep only the locked group. Then drop
-   groups that violate any `"required"` constraint.
+   groups that violate any active `"required"` constraint.
 2. **Equivalence** ([`equivalence.ts`](./equivalence.ts)). Within a course,
    some groups score the same in every schedule: identical mask words,
    identical sessions (day, periods, weeks, campus), the same language, the
-   same free-seats status and the same lecturer-avoid status. They form one
-   class. The search uses one representative per class (the lexicographically
+   same program flag (`violates("programs")`), the same free-seats status and
+   the same lecturer-avoid status. They form one class. `daysOff` and
+   `partsOff` need no place in the key: they follow from the sessions. The search uses one representative per class (the lexicographically
    smallest id), and the other keys go into `Pick.alternatives`. Filtering runs
    first, so an excluded or filtered-out group is never listed as an alternative.
 3. **Search** ([`search.ts`](./search.ts)). Courses are ordered by MRV: fewest
@@ -85,10 +93,12 @@ fall back to 5 / 5,000,000.
    - **strict**: if every course still has groups after step 1, search.
      A schedule found → `status: "ok"`.
    - **relaxed**: if a course was emptied or the strict search found nothing,
-     and some constraint is `"required"`, search again with only the hard rules
-     applied. Every required constraint becomes a soft item with weight
+     and some active constraint is `"required"`, search again with only the hard
+     rules applied. Every required constraint becomes a soft item with weight
      `RELAX_WEIGHT` (1000). `relaxed` lists them, and `diagnostics` say which
-     courses had no valid group and which constraint blocked them.
+     courses had no valid group and which constraint blocked them. A course
+     blocked by `programs` gets its own `course-no-program` diagnostic, which
+     names the programs the course does have.
    - **infeasible**: otherwise `schedules: []`. `diagnostics` name:
      - courses emptied by locked/excluded rules (missing locked group, locked
        group excluded, every group excluded, or no groups at all);

@@ -45,7 +45,7 @@ raw text ─ parse() ─► Course[] + warnings            src/lib/parser/   (Ph
          ─ solve(courses, prefs) ─► Schedule[]       src/lib/solver/   (Phase 3, pure; Web Worker wrapper in Phase 4)
          ─ UI                                        src/app/, src/components/, src/lib/view/ (Phase 4–6)
 ```
-UI state (Phase 4): one reducer in `src/app/state.ts` holds pastes, prefs, the current step, the solver status and the last result. `useSolver(dispatch)` (`src/app/useSolver.ts`) returns only `{ run, cancel }`; it posts requests to the worker and reports progress, results and errors by dispatching actions, and the reducer drops responses whose request id is stale. localStorage (`tkb:v1`) keeps only the raw pastes and the preferences, never results.
+UI state (Phase 4): one reducer in `src/app/state.ts` holds pastes, prefs, the current step, the solver status and the last result. `useSolver(dispatch)` (`src/app/useSolver.ts`) returns only `{ run, cancel }`; it posts requests to the worker and reports the start, the result and errors by dispatching actions (there is no progress reporting: the worker sends one response per request), and the reducer drops responses whose request id is stale. localStorage (`tkb:v1`) keeps the raw pastes, the preferences (including locks and excluded groups), `autoLocked`, `registered` and `semesterStart`, never results.
 Every lib module is a pure function with no DOM or React dependency, and is unit-tested.
 
 ## 6. Data model (parser output)
@@ -58,7 +58,8 @@ interface Group { id: string; theoryGroup: string; practiceGroup: string | null;
   lecturer: string | null; labLecturer: string | null; theoryClassSize: number | null;
   sessions: Session[]; }
 interface Course { code: string; name: string; credits: number | null; groups: Group[]; }
-interface ParseWarning { line: number; text: string; message: string; }
+interface ParseWarning { line: number; text: string; message: string;
+  code: string; params: Record<string, unknown>; } // code: one of PARSE_WARNING_CODES
 interface ParseResult { courses: Course[]; warnings: ParseWarning[]; }
 ```
 Time bitmask (Phase 2): 30 weeks × 7 days × 16 periods = 3360 bits, stored as Uint32Array(105). Conflict check = bitwise AND.
@@ -80,33 +81,35 @@ Soft only (weighted score):
 App defaults (Phase 4, extended in Phase 7): the solver's `DEFAULT_PREFERENCES` (every constraint off) are unchanged; the app starts from them with `freeSeats` set to "preferred", so the first suggestions avoid groups that are already full, and `programs` set to "required" with nothing chosen.
 Relaxation: if any course has zero valid groups or the search finds zero schedules, convert user "Required" items into soft penalties with a very large weight, re-run, and report every relaxed/violated item.
 Missing program (Phase 7): when `programs` is required and a course has no group in the allowed set, the solver adds the diagnostic `course-no-program`, naming the course and the programs it does have (e.g. "SK2001 … chỉ có A, CC"). In the UI that diagnostic carries a "Bỏ lọc chương trình" button, which sets `programs.mode = "off"` and re-runs.
-Equivalent-group collapsing: within a course, groups with identical time masks AND identical per-session campus AND the same language, program track, free-seats status and lecturer-avoid status score identically in every schedule. The solver searches one representative per class (lexicographically smallest id) and lists the other group keys as alternatives of the pick, so the user can register any of them. (`daysOff` and `partsOff` need no place in the key: they follow from the sessions.)
+Equivalent-group collapsing: within a course, groups with identical time masks AND identical per-session campus AND the same language, program-filter status (whether the group's program is outside `programs.allowed`), free-seats status and lecturer-avoid status score identically in every schedule. The solver searches one representative per class (lexicographically smallest id) and lists the other group keys as alternatives of the pick, so the user can register any of them. (`daysOff` and `partsOff` need no place in the key: they follow from the sessions.)
 
 ### 7b. Paste timestamps (Phase 7)
 Each stored course block carries `pastedAt` (ISO), set when it is added or re-pasted; a save written before Phase 7 loads as `null` = "không rõ thời điểm". Data older than `STALE_PASTE_MS` (30 minutes), or of unknown age, is **stale**: steps 1 and 2 show "Dán 12 phút trước" and mark stale blocks with a warning style and a "nên dán lại" hint, and steps 4 and 5 show one banner ("Số chỗ trống có thể đã thay đổi — nên dán lại dữ liệu trước khi đăng ký.") when any course of the shown schedule is stale. Nothing is blocked. The clock is always passed in as a parameter (`formatAge(pastedAt, now)`), never read inside a pure helper.
 
 ## 8. Solver
 1. Filter each course's groups by hard constraints.
-2. Order courses by ascending number of remaining groups (MRV).
-3. DFS/backtracking: pick one group per course; prune on bitmask conflict (Phase 6: looked up in a pairwise candidate conflict table built once per search).
-4. On a complete assignment, compute score; keep top-K (default 5) in a min-heap. (Phase 6: scored incrementally — only the (week, day) cells a pick touches are updated — with results identical to a full rescan.)
+2. Collapse equivalent groups (§7), then order courses by ascending number of equivalence classes (MRV), ties broken by course code.
+3. DFS/backtracking: pick one class representative per course; prune on bitmask conflict (Phase 6: looked up in a pairwise candidate conflict table built once per search).
+4. On a complete assignment, compute score; keep top-K (default 5) in a sorted array (penalty ascending, then pick keys). (Phase 6: scored incrementally — only the (week, day) cells a pick touches are updated — with results identical to a full rescan.)
 5. Optional branch & bound using an upper-bound score estimate. (Not used: several metrics are not monotone, so no cheap admissible bound exists; see src/lib/solver/README.md.)
-6. Phase 3 `solve()` is a pure function; Phase 4 wraps it in a Web Worker so the UI shows progress and can cancel.
+6. Phase 3 `solve()` is a pure function; Phase 4 wraps it in a Web Worker so the UI stays responsive. There is no progress reporting; cancel (and the 15 s timeout) terminates the worker and starts a fresh one.
 
 ## 9. Tech stack
-Vite + React + TypeScript, Tailwind CSS, Vitest, Web Worker, localStorage. Deploy: GitHub Pages. No runtime dependencies beyond these unless justified.
+Vite + React + TypeScript, Tailwind CSS, Vitest, Web Worker, localStorage. Deploy: Vercel (static Vite build, `dist/`, served at `/`); GitHub Actions only runs tests, lint and type checks. No runtime dependencies beyond these unless justified.
 
 ## 10. Folder structure
 ```
-src/lib/parser/     types.ts, parse.ts, index.ts, README.md
+src/lib/parser/     types.ts, parse.ts, program.ts (program track, Phase 7), index.ts, README.md
 src/lib/timing/     constants.ts, mask.ts, build.ts, conflicts.ts, index.ts, README.md
 src/lib/solver/     types.ts, constants.ts, filter.ts, equivalence.ts, score.ts, search.ts, solve.ts, index.ts, README.md
                     (protocol.ts, worker.ts: Phase 4)
 src/lib/export/     ics.ts (RFC 5545), periods.ts (period times), image.ts (PNG layout)
-src/lib/view/       pure display helpers (grid blocks, week labels, labels, palette)
-src/app/            reducer state, storage, paste splitting, useSolver hook
+src/lib/view/       pure display helpers (grid blocks, week labels, labels, palette, checklist text)
+src/app/            state.ts (reducer), selection.ts (locks), storage.ts, pastes.ts (paste splitting),
+                    useSolver.ts, messages.ts (Vietnamese messages), browser.ts (clipboard, download),
+                    imageExport.ts (canvas drawing)
 src/components/     PasteInput, CoursePreview, PreferencesForm, TimetableGrid, ResultTabs, Checklist, ...
-src/App.tsx         App flow (Paste → Preview → Preferences → Results)
+src/App.tsx         App flow, 5 steps (Dán dữ liệu → Kiểm tra → Yêu cầu → Kết quả → Đăng ký)
 tests/              *.test.ts
 tests/fixtures/     real text copied from the registration page (never hand-typed or invented)
 ```
