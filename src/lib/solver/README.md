@@ -28,7 +28,7 @@ Tests: [`tests/solver.test.ts`](../../../tests/solver.test.ts).
 | [`filter.ts`](./filter.ts) | group-level constraint predicates; locked/excluded rules |
 | [`equivalence.ts`](./equivalence.ts) | collapses groups that score identically |
 | [`score.ts`](./score.ts) | per-group features and the scorer |
-| [`search.ts`](./search.ts) | MRV-ordered DFS with mask pruning and a top-K list |
+| [`search.ts`](./search.ts) | MRV-ordered DFS with forward checking and a top-K list |
 | [`solve.ts`](./solve.ts) | strict → relaxed → infeasible pipeline, diagnostics |
 
 ## Preferences
@@ -77,10 +77,19 @@ fall back to 5 / 5,000,000.
    smallest id), and the other keys go into `Pick.alternatives`. Filtering runs
    first, so an excluded or filtered-out group is never listed as an alternative.
 3. **Search** ([`search.ts`](./search.ts)). Courses are ordered by MRV: fewest
-   classes first, ties broken by course code. Before the DFS, `conflictTable`
-   compares every candidate with every candidate of each other course once;
-   the DFS then skips a candidate that clashes with a pick above it by table
-   lookup (at most one lookup per depth) instead of comparing 105-word masks.
+   classes first, ties broken by course code. Before the DFS,
+   `compatibilityTable` compares every candidate with every candidate of each
+   later course once and stores, per candidate, a bitset of the later course's
+   candidates it does not clash with.
+   - **Forward checking.** Every course not yet picked keeps a *live* bitset:
+     its candidates compatible with all picks above. Picking a candidate ANDs
+     its rows into the live sets of the courses below; if one becomes empty,
+     the branch is pruned at once instead of being explored down to the course
+     that has nothing left. Only live candidates are tried, so no clash check
+     is needed at a node.
+   - Candidates are still tried in index order, and pruning only skips
+     subtrees that contain no complete assignment, so the assignments found,
+     and their order, are exactly those of a plain DFS: only node counts change.
    - One *node* is one candidate tried at some depth. At `maxNodes` the search
      stops and sets `truncated`.
    - Each complete assignment is scored. The best `topK` are kept in a sorted
@@ -172,9 +181,11 @@ of additions, so its penalty equals `penalty()` exactly (the brute-force tests
 compare them), and results are identical to a full rescan.
 
 With the six real fixtures (CO2001, CO2003, CO2007, CO2011, SK2001, SP1031)
-and the app defaults: 2,778,034 nodes and 1,278,259 complete schedules. A full
-rescan per leaf took about 6.6 s; the conflict table and incremental scoring
-take about 0.3–0.4 s (bundled, Node 24), with the same nodes and results.
+and the app defaults: 1,278,259 complete schedules. A full rescan per leaf took
+about 6.6 s; a conflict table and incremental scoring brought that to about
+0.3–0.4 s (bundled, Node 24) with 2,778,034 nodes. Forward checking (2026-11-02)
+cuts the nodes to 1,347,479 with the same schedules (0.24–0.31 s under vitest);
+the before/after table is in `HANDOVER.md` §8.
 
 ## Diagnostics
 

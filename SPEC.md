@@ -89,7 +89,7 @@ Each stored course block carries `pastedAt` (ISO), set when it is added or re-pa
 ## 8. Solver
 1. Filter each course's groups by hard constraints.
 2. Collapse equivalent groups (§7), then order courses by ascending number of equivalence classes (MRV), ties broken by course code.
-3. DFS/backtracking: pick one class representative per course; prune on bitmask conflict (Phase 6: looked up in a pairwise candidate conflict table built once per search).
+3. DFS/backtracking: pick one class representative per course; prune on bitmask conflict, with forward checking: a pairwise candidate compatibility table (bitsets) is built once per search, every course not yet picked keeps the set of candidates still compatible with the picks above, and a branch is cut as soon as one of those sets is empty. Results are identical to a plain DFS; only node counts change.
 4. On a complete assignment, compute score; keep top-K (default 5) in a sorted array (penalty ascending, then pick keys). (Phase 6: scored incrementally — only the (week, day) cells a pick touches are updated — with results identical to a full rescan.)
 5. Optional branch & bound using an upper-bound score estimate. (Not used: several metrics are not monotone, so no cheap admissible bound exists; see src/lib/solver/README.md.)
 6. Phase 3 `solve()` is a pure function; Phase 4 wraps it in a Web Worker so the UI stays responsive. There is no progress reporting; cancel (and the 15 s timeout) terminates the worker and starts a fresh one.

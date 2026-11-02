@@ -46,7 +46,7 @@ Không cần `vercel.json`: ứng dụng chỉ có một trang, không có route
 ```
 src/lib/parser/   đọc văn bản copy từ trang đăng ký → môn, nhóm, buổi học (+ cảnh báo có mã)
 src/lib/timing/   mặt nạ bit thời gian (30 tuần × 7 ngày × 16 tiết), kiểm tra trùng giờ
-src/lib/solver/   tìm top-K lịch: lọc, gộp nhóm tương đương, DFS + bảng xung đột, chấm điểm tăng dần, nới yêu cầu
+src/lib/solver/   tìm top-K lịch: lọc, gộp nhóm tương đương, DFS + kiểm tra trước (forward checking), chấm điểm tăng dần, nới yêu cầu
 src/lib/export/   tệp .ics (RFC 5545), bố cục ảnh PNG, giờ các tiết
 src/lib/view/     hàm hiển thị thuần: khối lưới, nhãn tuần, định dạng, bảng màu
 src/app/          reducer, lưu trữ, Web Worker (useSolver), thông điệp tiếng Việt, sao chép / tải tệp

@@ -609,8 +609,15 @@ describe("equivalent groups", () => {
 
 describe("other", () => {
   it("orders courses by MRV: CO2011 (10 classes) before CO2007 (18)", () => {
-    // Every node is one candidate tried: 10 at depth 0, then 18 under each of them.
-    expect(solve(BOTH, prefs()).stats.nodes).toBe(10 + 10 * 18);
+    // Every node is one candidate tried. With forward checking only live
+    // candidates are tried: all 10 of CO2011 at depth 0, then under each of
+    // them the CO2007 groups it does not clash with. CO2007 first would give
+    // 18 + the same pair count instead.
+    const [co2007, co2011] = BOTH;
+    const compatiblePairs = co2011.groups.flatMap((a) => co2007.groups.filter((b) => !conflicts(a, b))).length;
+    expect(co2007.groups).toHaveLength(18);
+    expect(co2011.groups).toHaveLength(10);
+    expect(solve(BOTH, prefs()).stats.nodes).toBe(10 + compatiblePairs);
   });
 
   it("is deterministic", () => {

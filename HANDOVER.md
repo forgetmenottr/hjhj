@@ -10,7 +10,7 @@ Every number below was re-measured on 2026-09-23 on the six fixtures in `tests/f
 ## 1. TL;DR
 
 - **What:** a client-only web app. HCMUT students paste the course blocks copied from the **registration page**, set constraints, and get the top-5 conflict-free timetables. From there they can lock groups, handle a full group, and register from a checklist. Exports: `.ics`, PNG, print.
-- **Status:** Phases 1–7 are done and pushed (`origin/main` at `7659fd3`). The Vercel project is **not created yet** (§9). 395 tests pass (16 files); `tsc -b`, `oxlint` and `vite build` are clean.
+- **Status:** Phases 1–7 are done and pushed (`origin/main` at `7659fd3`). The Vercel project is **not created yet** (§9). 401 tests pass (16 files); `tsc -b`, `oxlint` and `vite build` are clean.
 - **Stack:** React 19, Vite 8, TypeScript ~6.0, Tailwind v4 and Vitest 5. The solver runs in a module Web Worker. The only runtime dependencies are `react` and `react-dom`.
 - **Run:** `npm install`, then `npm run dev` → http://localhost:5173/
 - **Test:** `npm test` (about 15 s). Full gate: bash `npm test && npx tsc -b && npm run lint && npm run build`. On PowerShell 5.1 the same gate is in §7.
@@ -184,8 +184,8 @@ Signatures are copied from the source. Types are summarized in §3.
 | `groupFeatures(group: IndexedGroup, prefs: Preferences): GroupFeatures` | Per-group masks, flags, cells and slot counts |
 | `createScorer(prefs: Preferences, relaxed: readonly ConstraintName[]): Scorer` | `penalty(picks, combined?)`, `explain(picks)` (reference), `start(): ScoreState` (incremental: `push`, `pop`, `penaltyWith`) |
 | `orderByMrv(domains: Domain[]): Domain[]` | Fewest candidates first, ties by code |
-| `conflictTable(domains: Domain[]): Uint8Array[][]` | Pairwise candidate clashes, computed once |
-| `search(domains: Domain[], scorer: Scorer, topK: number, maxNodes: number): SearchResult` | DFS over MRV-ordered domains; top-K; node budget |
+| `compatibilityTable(domains: Domain[]): Uint32Array[][]` | Pairwise candidate compatibility as bitsets (`table[i][j]`, i < j), computed once |
+| `search(domains: Domain[], scorer: Scorer, topK: number, maxNodes: number): SearchResult` | DFS over MRV-ordered domains with forward checking; top-K; node budget |
 | `compareFound(a: Found, b: Found): number` | Penalty, then pick keys (deterministic ties) |
 | `handleRequest(request: unknown): SolveResponse` (`protocol.ts`) | Worker body: `buildMasks` + `solve`; errors → `{ok:false, error}` (Vietnamese) |
 
@@ -256,11 +256,11 @@ These counts were re-run at each commit in temporary worktrees on 2026-09-23.
 
 **Lost and recreated commits.** Six commits made on 2026-09-28 were never pushed and were lost when the author's machine failed. They were recreated on 2026-11-02 from a written brief, which describes four changes:
 - moving deployment from GitHub Pages to Vercel (`vite.config.ts` back to base `/`, `deploy.yml` replaced by a test-only `ci.yml`, `engines.node = 24.x`, README) — recreated;
-- removing `conflictTable` from `solver/search.ts` as unused — **not** recreated: in the current code `search()` calls it to build its conflict table, so it is not dead code (see §6);
+- removing `conflictTable` from `solver/search.ts` as unused — **not** recreated then: at that point `search()` still called it. It was removed in the forward-checking commit below, which replaced it;
 - syncing SPEC, this file and the lib READMEs with the code — recreated;
 - a project favicon in place of the default Vite logo — recreated.
 
-The brief does not say what the other two of the six commits contained. If one of them changed `search()` so that it no longer used `conflictTable`, that work is still missing.
+A second brief (also 2026-11-02) described the remaining lost work: **forward checking in the solver with an 8-course benchmark** ("perf: forward checking in the solver", §8), and Vietnamese documents for the author (`docs/cau-truc-du-an.md`, `docs/viec-con-lai.md`).
 
 ### Phase 1 — parser
 **Shipped:** `parse()`, handling tab-separated and space-collapsed layouts; warnings instead of exceptions; tests on real fixtures and on edge cases derived from them.
@@ -383,7 +383,8 @@ The brief does not say what the other two of the six commits contained. If one o
 | Auto re-run only on step 4 (and "Đã đầy" or undo on step 5), 200 ms debounce | Quick clicks share one run; edits on steps 2–3 only mark the result stale; checking "Đã đăng ký" must not reshuffle the checklist | `app/state.ts:withSelections`, `App.tsx` effects | Yes |
 | Union week view by default + week labels | The grid shows all weeks. Labs show "tuần 6,10,…"; theory outside the usual term shows "T1–5" / "T6–7, 9–11" / "T12–16" | `view/grid.ts:standardWeeks`, `weekLabel` | Yes |
 | Week grid keeps the all-weeks frame | Days and rows do not jump when switching weeks | `components/TimetableSection.tsx` (`frame` prop) | Yes |
-| Conflict table + incremental scoring | Leaf rescans dominated (≈ 5.5 s bundled); exact same integer totals, formulas and addition order, so the penalties are bit-identical | `solver/search.ts:conflictTable`, `solver/score.ts:createState` | Yes (the full `penalty()` path remains the reference) |
+| Conflict table + incremental scoring | Leaf rescans dominated (≈ 5.5 s bundled); exact same integer totals, formulas and addition order, so the penalties are bit-identical | `solver/score.ts:createState` (the Phase 6 `conflictTable` was replaced by forward checking, next row) | Yes (the full `penalty()` path remains the reference) |
+| Forward checking with a static MRV order | Cuts nodes 51–63% on six courses and 67–82% on eight, counted on complete searches (§8). Candidates are still tried in index order and only subtrees with no complete assignment are pruned, so the schedules and their order are those of a plain DFS. Dynamic reordering would change the order in which leaves are found, so truncated runs would no longer be comparable | `solver/search.ts:compatibilityTable`, `search` | Yes |
 | Program track lives in `src/lib/parser/program.ts`, not in `src/lib/view/` | `solver/filter.ts` needs `programOf`, and `view` already depends on `solver`; the parser is the lowest layer, and the prefix is a parsing convention of the group id | `lib/parser/program.ts`, re-exported from `lib/parser/index.ts` | Yes |
 | An empty `programs.allowed` / `partsOff.parts` filters nothing and is never relaxed | The program card defaults to "Bắt buộc" with nothing chosen, and a requirement that cannot reject anything must not be reported as violated or relaxed. Guarded in two places: `violates` (for direct callers and the equivalence key) and `constraintsWithMode` via `isActive`. The Phase 3 constraints keep their old behavior, so all 346 earlier tests are untouched | `solver/filter.ts:isActive`, `violates` | Yes |
 | App default `programs: "required"` with `allowed: []`; solver `DEFAULT_PREFERENCES` still all off | Same split as `freeSeats` in Phase 4: the solver stays neutral for tests, the app shows the mode the student needs. Harmless because of the rule above | `app/state.ts:defaultPrefs` | Yes |
@@ -419,7 +420,7 @@ The brief does not say what the other two of the six commits contained. If one o
 - An edge case is *derived* from a real fixture by a minimal, commented edit inside the test. Examples: `editLine(CO2007, 7, …)`; `withoutGroup(CO2007, "A01_A02")`; moving L04_L08's lab onto L04_L07's slot to create equivalent groups.
 - If an expected value contradicts the fixture, fix the test, not the parser.
 
-**Current counts** (`npx vitest run --reporter=verbose`, 2026-09-23): 395 tests in 16 files, ≈ 16 s.
+**Current counts** (`npx vitest run --reporter=json`, 2026-11-02): 401 tests in 16 files, ≈ 23 s.
 
 | File | Tests | File | Tests |
 |---|---|---|---|
@@ -429,7 +430,7 @@ The brief does not say what the other two of the six commits contained. If one o
 | state.test.ts | 42 | shortterm.test.ts | 10 |
 | timing.test.ts | 32 | storage.test.ts | 9 |
 | format.test.ts | 19 | messages.test.ts | 8 |
-| summary.test.ts / perf.test.ts | 6 / 6 | protocol.test.ts | 4 |
+| summary.test.ts / perf.test.ts | 6 / 12 | protocol.test.ts | 4 |
 | image.test.ts | 3 | | |
 
 **Commands** (all verified; the same in PowerShell 5.1 and bash unless noted):
@@ -477,7 +478,7 @@ Production check, both shells: `npm run build`, then `npm run preview` → http:
 | (4) | ok | 100,372 | 109,389 | 23 ms | 26–28 ms | 131 ms | no |
 | (5) | ok | 50,704 | 76,576 | not measured | 10–14 ms | n/a | no |
 
-Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1)–(4) are unchanged from Phase 6 within noise, and their node counts are bit-identical, which is what pins the Phase 7 constraints as behavior-preserving when they are off. The "bundled Node" and "old solver" columns were not re-measured in Phase 7.
+This table is the Phase 7 solver, before forward checking; the current numbers are under "Forward checking" below. Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1)–(4) are unchanged from Phase 6 within noise, and their node counts are bit-identical, which is what pins the Phase 7 constraints as behavior-preserving when they are off. The "bundled Node" and "old solver" columns were not re-measured in Phase 7.
 
 - **Browser:** the production build under `vite preview` at `/tkb_web/` (the Pages base at the time), config (1): solver 306–313 ms, round trip 313–318 ms over 3 runs (headless Chrome, Windows 11).
 - **Equivalence classes per course** (groups → classes):
@@ -492,13 +493,31 @@ Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1
 - The bundled-Node and old-vs-new numbers came from throwaway scripts bundled with `npx rolldown <entry>.ts --format esm --platform node -o out.mjs`. They are not committed.
 - Classes per course: `equivalenceClasses(applyConstraints(applyHardRules(course, p), constraintsWithMode(p, "required"), p), p).length`, with `p = normalizePreferences(prefs)`.
 
-**Where the time goes** (defaults): 2,778,034 nodes and 1,278,259 complete schedules (leaves). The DFS alone, with a no-op scorer on the current conflict-table search, takes ≈ 200 ms under vitest. The Phase 5 solver took 39,825 ms under vitest on the same input, so a full per-leaf rescan was nearly all of the cost.
+**Forward checking (2026-11-02).** Same configurations, on six courses and on an 8-course bench (the six fixtures plus clones of CO2007 and CO2011 with only the course code rewritten, built in `tests/perf.test.ts`). Vitest, range over 3 runs each, Windows 11, Node 24.19.0.
+
+| Courses | Config | Nodes before | ms before | Nodes after | ms after | Truncated after |
+|---|---|---|---|---|---|---|
+| 6 | (1) | 2,778,034 | 408–433 | 1,347,479 | 236–311 | no |
+| 6 | (2) | 2,778,034 | 505–558 | 1,347,479 | 275–339 | no |
+| 6 | (3) | 44,104 | 10–13 | 16,414 | 8–11 | no |
+| 6 | (4) | 100,372 | 26–29 | 36,703 | 20–23 | no |
+| 6 | (5) | 50,704 | 11–14 | 23,364 | 10–11 | no |
+| 8 | (1) | 5,000,000 (truncated) | 592–615 | 5,000,000 | 1,068–1,283 | **yes** |
+| 8 | (2) | 5,000,000 (truncated) | 608–760 | 5,000,000 | 1,251–1,476 | **yes** |
+| 8 | (3) | 107,194 | 19–25 | 23,629 | 9–17 | no |
+| 8 | (4) | 2,048,235 | 303–308 | 375,335 | 153–254 | no |
+| 8 | (5) | 217,590 | 34–48 | 72,672 | 21–36 | no |
+
+- **Eight courses with nothing required are still truncated.** A complete search needs 59,714,230 nodes before and 19,638,693 after forward checking (measured with a raised budget in a throwaway test), both above `DEFAULT_MAX_NODES = 5,000,000`, which was not raised. The truncated runs got slower (≈ 0.6 s → 1.1–1.5 s): every one of the 5M nodes is now a live candidate that goes deeper into the tree and reaches more complete schedules, instead of a cheap rejected clash. `tests/perf.test.ts` asserts this truncation, so a change shows up as a test failure.
+- **Identical results.** A throwaway differential test ran the old and the new `search()` on the same domains for all five configurations plus a relaxed run, on 6 and on 8 courses, with top-5 and top-50 and a budget large enough to finish: all 24 cases returned the same schedules, in the same order, with the same penalties. The brute-force parity tests in `tests/solver.test.ts` pass unchanged; only the MRV node-count test was rewritten, because it counted clashing candidates as nodes.
+
+**Where the time goes** (defaults, six courses): 1,278,259 complete schedules (leaves), the same before and after forward checking. With the Phase 6 conflict-table search (2,778,034 nodes), the DFS alone with a no-op scorer took ≈ 200 ms under vitest. The Phase 5 solver took 39,825 ms under vitest on the same input, so a full per-leaf rescan was nearly all of the cost.
 
 **Levers if it gets slow again** (e.g. 7–8 courses):
-1. **`maxNodes`** (5,000,000). Six courses already use 2.78M. When it is hit, the result is `truncated`, the UI shows a yellow note, and a `truncated` diagnostic is added. Raising it costs time; lowering it trades completeness.
+1. **`maxNodes`** (5,000,000). Six courses use 1.35M; eight courses with nothing required need 19.6M and are truncated (see above). When it is hit, the result is `truncated`, the UI shows a yellow note, and a `truncated` diagnostic is added. Raising it costs time; lowering it trades completeness.
 2. **Equivalence collapsing** removes 37% of nodes on this data. The key already ignores rooms and lecturer names; only the lecturer-avoid flag counts. Collapsing further, e.g. across campuses, would be unsafe, because campus feeds `campuses` and `noCampusSwitch`.
-3. **Pairwise conflict table** (done): each node now costs ≤ depth table lookups instead of up to two 105-word mask passes (`intersects` + OR).
-4. **Forward checking.** Keep per-depth bitsets of the candidates still compatible, and prune a branch as soon as a future course has none left. This changes node counts but not results. It is the next step if needed.
+3. **Pairwise table** (done in Phase 6 as a conflict table; now the bitset `compatibilityTable`): no 105-word mask pass at a node.
+4. **Forward checking** (done, 2026-11-02): per-depth live bitsets, branch pruned as soon as a future course has none left. Node counts changed, results did not.
 5. **Better ordering or bounds.** MRV by classes is already used. A sound lower bound would enable branch & bound; see the decision log for why none exists yet.
 6. **Worker time limit:** `SOLVE_TIMEOUT_MS = 15_000` in `app/useSolver.ts`.
 
@@ -584,7 +603,7 @@ Vitest columns are the range over 3 runs on 2026-09-23 (Windows 11, Node 24); (1
   - Files: `src/app/storage.ts`, `src/app/state.ts`, `src/App.tsx`, `tests/storage.test.ts`.
 - **PWA / offline.** A web manifest plus a service worker that pre-caches `dist/` (the app is fully client-side already).
   - Files: `index.html`, new `public/manifest.webmanifest`, a new service-worker source (hand-written, or a Vite plugin as a devDependency), `vite.config.ts` (the app is served at `/`, so the scope is the root).
-- **Forward checking / smarter search for 7–8+ courses** (see §8 levers 4–5).
+- **Smarter search for 8+ courses** (see §8 lever 5): forward checking is done, but 8 courses with nothing required still exceed `maxNodes`. Candidates: dynamic MRV on the live-set sizes (changes the leaf order, so truncated results change), or a sound bound for branch & bound.
   - Files: `src/lib/solver/search.ts`, `solver/README.md`.
 - **Registration-result page parser.** Explicitly out of scope today, and needs real copied fixtures first.
   - Files: `src/lib/parser/` (a second entry point), `src/app/pastes.ts`.
